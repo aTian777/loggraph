@@ -161,7 +161,8 @@ class Locator:
             
             # Fast keyword filter: skip if no shared keywords (unless template is very short)
             # Optimize by using isdisjoint() which is faster than intersection for non-overlapping sets
-            if site_kw and msg_keywords and template_len > 3 and site_kw.isdisjoint(msg_keywords):
+            # Also check template_len first as it's a cheaper operation
+            if template_len > 3 and site_kw and msg_keywords and site_kw.isdisjoint(msg_keywords):
                 continue
             
             # Use pre-compiled regex for fast matching
