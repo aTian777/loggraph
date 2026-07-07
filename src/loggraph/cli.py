@@ -1,0 +1,150 @@
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from dataclasses import asdict
+from pathlib import Path
+from loggraph.indexer import Indexer
+from loggraph.graph.store import save_index, load_index
+from loggraph.logs.parser import parse_log_block, parse_log_text
+from loggraph.matchers.locator import Locator
+from loggraph.graph.render import render
+from loggraph.evaluation.runner import evaluate
+from loggraph.analyzer import analyze_log, compact_summary, default_index_path, write_analysis
+
+
+def cmd_index(args):
+    idx = Indexer().build(args.src)
+    save_index(idx, args.out)
+    print(json.dumps({"functions": len(idx.functions), "calls": len(idx.calls), "log_sites": len(idx.log_sites), "out": args.out}, indent=2))
+
+
+def cmd_init(args):
+    out = Path(args.out) if args.out else default_index_path(args.project)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    src = Path(args.src) if args.src else Path(args.project)
+    idx = Indexer().build(src)
+    save_index(idx, out)
+    print(json.dumps({
+        "project": str(Path(args.project).resolve()),
+        "src": str(src.resolve()),
+        "cache": str(out),
+        "functions": len(idx.functions),
+        "calls": len(idx.calls),
+        "log_sites": len(idx.log_sites),
+    }, ensure_ascii=False, indent=2))
+
+
+def _print_candidates(cands):
+    print(json.dumps([asdict(c) for c in cands], indent=2))
+
+
+def cmd_query(args):
+    idx = load_index(args.index)
+    entry = parse_log_block(args.log)
+    _print_candidates(Locator(idx).locate(entry, top=args.top))
+
+
+def cmd_locate(args):
+    idx = load_index(args.index)
+    text = Path(args.log_file).read_text(encoding="utf-8")
+    locator = Locator(idx)
+    results = []
+    for entry in parse_log_text(text):
+        results.append({"log": entry.raw, "candidates": [asdict(c) for c in locator.locate(entry, top=args.top)]})
+    print(json.dumps(results, indent=2))
+
+
+def cmd_analyze(args):
+    index_path = Path(args.index) if args.index else default_index_path(args.project)
+    out = Path(args.out) if args.out else Path(args.project) / ".loggraph" / (Path(args.log_file).stem + ".analysis.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    report = analyze_log(index_path, args.log_file, top=args.top, app_only=not args.all_lines)
+    write_analysis(report, out)
+    summary = compact_summary(report, max_matches=args.show_matches)
+    summary["out"] = str(out)
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+
+def cmd_render(args):
+    idx = load_index(args.index)
+    if args.log:
+        cands = Locator(idx).locate(parse_log_block(args.log), top=args.top)
+    else:
+        ids = set(args.function_id or [])
+        cands = []
+        for fid in ids:
+            fn = idx.functions[fid]
+            from loggraph.models import Candidate
+            cands.append(Candidate(f"manual:{fid}", 1.0, fid, fn.qualname, fn.file, fn.start_line, ["manual render selection"]))
+    out = render(idx, cands, args.out)
+    print(str(out))
+
+
+def cmd_evaluate(args):
+    res = evaluate(args.src, args.corpus, top=args.top, tolerance=args.tolerance)
+    payload = {"total": res.total, "top1": res.top1, "top3": res.top3, "accuracy": res.accuracy, "failures": res.failures[: args.show_failures]}
+    print(json.dumps(payload, indent=2))
+    if res.accuracy < args.min_accuracy:
+        return 1
+    return 0
+
+
+def build_parser():
+    p = argparse.ArgumentParser(prog="loggraph")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("index")
+    s.add_argument("src")
+    s.add_argument("--out", required=True)
+    s.set_defaults(func=cmd_index)
+    s = sub.add_parser("init")
+    s.add_argument("project")
+    s.add_argument("--src", help="Source directory to index. Defaults to project root.")
+    s.add_argument("--out", help="Cache path. Defaults to <project>/.loggraph/index.json.")
+    s.set_defaults(func=cmd_init)
+    s = sub.add_parser("query")
+    s.add_argument("index")
+    s.add_argument("--log", required=True)
+    s.add_argument("--top", type=int, default=3)
+    s.set_defaults(func=cmd_query)
+    s = sub.add_parser("locate")
+    s.add_argument("index")
+    s.add_argument("--log-file", required=True)
+    s.add_argument("--top", type=int, default=3)
+    s.set_defaults(func=cmd_locate)
+    s = sub.add_parser("analyze")
+    s.add_argument("project")
+    s.add_argument("--log-file", required=True)
+    s.add_argument("--index", help="Index cache path. Defaults to <project>/.loggraph/index.json.")
+    s.add_argument("--out", help="Analysis report path. Defaults to <project>/.loggraph/<log-stem>.analysis.json.")
+    s.add_argument("--top", type=int, default=3)
+    s.add_argument("--show-matches", type=int, default=10)
+    s.add_argument("--all-lines", action="store_true", help="Analyze all log lines instead of app-tag lines only.")
+    s.set_defaults(func=cmd_analyze)
+    s = sub.add_parser("render")
+    s.add_argument("index")
+    s.add_argument("--log")
+    s.add_argument("--function-id", action="append")
+    s.add_argument("--top", type=int, default=3)
+    s.add_argument("--out", required=True)
+    s.set_defaults(func=cmd_render)
+    s = sub.add_parser("evaluate")
+    s.add_argument("--src", required=True)
+    s.add_argument("--corpus", required=True)
+    s.add_argument("--top", type=int, default=3)
+    s.add_argument("--tolerance", type=int, default=3)
+    s.add_argument("--min-accuracy", type=float, default=0.90)
+    s.add_argument("--show-failures", type=int, default=10)
+    s.set_defaults(func=cmd_evaluate)
+    return p
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    rc = args.func(args)
+    return int(rc or 0)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

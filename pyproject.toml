@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "loggraph"
+version = "0.1.0"
+description = "Locate source code from logs using a code graph and log-site index."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+loggraph = "loggraph.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
