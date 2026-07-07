@@ -157,6 +157,8 @@ class Locator:
                 msg_keywords.add(word)
         # Cache entry level to avoid repeated lower() calls
         entry_level_lower = entry.level.lower() if entry.level else None
+        # Cache entry logger to avoid repeated attribute access
+        entry_logger = entry.logger
         
         for lid, site_info in self._site_info.items():
             fn, compiled, site_kw, template_len, site = site_info
@@ -178,7 +180,7 @@ class Locator:
                 score = 85.0
                 if entry_level_lower and site.level and entry_level_lower.startswith(site.level.lower()[:4]):
                     score += 8.0
-                if entry.logger and (entry.logger in fn.module or entry.logger in fn.qualname):
+                if entry_logger and (entry_logger in fn.module or entry_logger in fn.qualname):
                     score += 5.0
                 add(site.function_id, score, f"template match: {site.template!r}", site.line, lid)
             elif len(msg) > 15 and template_len > 15:
