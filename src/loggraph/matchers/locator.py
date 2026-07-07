@@ -29,6 +29,8 @@ class Locator:
             keywords = {w for w in re.findall(r'[A-Za-z\u4e00-\u9fff]{4,}', site.template.lower())}
             self._site_keywords[lid] = keywords
         # Build function name and module indexes
+        self._func_qualname_to_fids: dict[str, list[str]] = {}
+        self._filename_to_fids: dict[str, list[str]] = {}
         for fid, fn in index.functions.items():
             name_lower = fn.name.lower()
             if len(name_lower) >= 3:
@@ -36,6 +38,12 @@ class Locator:
             module_lower = fn.module.lower()
             if len(module_lower) >= 3:
                 self._module_to_fids.setdefault(module_lower, []).append(fid)
+            # Index by qualname for fast function name matching
+            self._func_qualname_to_fids.setdefault(fn.qualname, []).append(fid)
+            # Index by filename for fast pathname matching
+            from pathlib import Path as PathLib
+            filename = PathLib(fn.file).name
+            self._filename_to_fids.setdefault(filename, []).append(fid)
         for e in index.calls:
             if e.caller in index.functions:
                 if e.callee in index.functions:
@@ -77,7 +85,20 @@ class Locator:
 
         # Direct structured file/function/line evidence.
         if entry.pathname or entry.function or entry.lineno:
-            for fid, fn in self.index.functions.items():
+            # Use indexes for fast lookup
+            candidate_fids = set()
+            if entry.pathname:
+                from pathlib import Path as PathLib
+                filename = PathLib(entry.pathname).name
+                candidate_fids.update(self._filename_to_fids.get(filename, []))
+            if entry.function:
+                candidate_fids.update(self._func_name_to_fids.get(entry.function.lower(), []))
+                candidate_fids.update(self._func_qualname_to_fids.get(entry.function, []))
+            
+            for fid in candidate_fids:
+                fn = self.index.functions.get(fid)
+                if not fn:
+                    continue
                 if entry.pathname and not filename_matches(fn.file, entry.pathname):
                     continue
                 if entry.function and entry.function not in {fn.name, fn.qualname, f"{fn.module}.{fn.qualname}"}:
@@ -90,10 +111,26 @@ class Locator:
         # Traceback frames are strongest. Last frame is crash site.
         for pos, frame in enumerate(entry.stack_frames):
             weight = 95.0 if pos == len(entry.stack_frames) - 1 else 60.0
-            for fid, fn in self.index.functions.items():
-                if frame.function in {fn.name, fn.qualname.split(".")[-1]} and filename_matches(fn.file, frame.file):
-                    bonus = 15.0 if fn.start_line <= frame.line <= fn.end_line else 0.0
-                    add(fid, weight + bonus, f"traceback frame {Path(frame.file).name}:{frame.line} in {frame.function}", frame.line)
+            # Use indexes for fast lookup
+            candidate_fids = set()
+            candidate_fids.update(self._func_name_to_fids.get(frame.function.lower(), []))
+            if '.' in frame.function:
+                short_name = frame.function.split('.')[-1]
+                candidate_fids.update(self._func_name_to_fids.get(short_name.lower(), []))
+            from pathlib import Path as PathLib
+            filename = PathLib(frame.file).name
+            candidate_fids.update(self._filename_to_fids.get(filename, []))
+            
+            for fid in candidate_fids:
+                fn = self.index.functions.get(fid)
+                if not fn:
+                    continue
+                if frame.function not in {fn.name, fn.qualname.split(".")[-1]}:
+                    continue
+                if not filename_matches(fn.file, frame.file):
+                    continue
+                bonus = 15.0 if fn.start_line <= frame.line <= fn.end_line else 0.0
+                add(fid, weight + bonus, f"traceback frame {Path(frame.file).name}:{frame.line} in {frame.function}", frame.line)
 
         # Logger template matching.
         msg = entry.message or entry.raw
