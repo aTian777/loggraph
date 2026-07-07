@@ -154,12 +154,9 @@ class Locator:
             if len(word) >= 4 and word.isalnum():
                 msg_keywords.add(word)
         
-        for lid, site in self.index.log_sites.items():
-            # Get pre-combined site info
-            site_info = self._site_info.get(lid)
-            if not site_info:
-                continue
+        for lid, site_info in self._site_info.items():
             fn, compiled, site_kw, template_len = site_info
+            site = self.index.log_sites[lid]
             
             # Fast keyword filter: skip if no shared keywords (unless template is very short)
             if site_kw and msg_keywords and not (site_kw & msg_keywords) and template_len > 3:
