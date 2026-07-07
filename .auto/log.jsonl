@@ -1,0 +1,1 @@
+{"type":"config","name":"Improve LogGraph retrieval speed by 50%","metricName":"total_ms","metricUnit":"ms","bestDirection":"lower"}
