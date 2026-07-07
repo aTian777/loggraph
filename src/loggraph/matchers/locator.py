@@ -16,6 +16,9 @@ class Locator:
         self._compiled_regex: dict[str, re.Pattern] = {}
         # Build keyword index for fast filtering
         self._site_keywords: dict[str, set[str]] = {}
+        # Build function name index for fast name matching
+        self._func_name_to_fids: dict[str, list[str]] = {}
+        self._module_to_fids: dict[str, list[str]] = {}
         for lid, site in index.log_sites.items():
             if site.regex:
                 try:
@@ -25,6 +28,14 @@ class Locator:
             # Extract keywords from template (words >= 4 chars)
             keywords = {w for w in re.findall(r'[A-Za-z\u4e00-\u9fff]{4,}', site.template.lower())}
             self._site_keywords[lid] = keywords
+        # Build function name and module indexes
+        for fid, fn in index.functions.items():
+            name_lower = fn.name.lower()
+            if len(name_lower) >= 3:
+                self._func_name_to_fids.setdefault(name_lower, []).append(fid)
+            module_lower = fn.module.lower()
+            if len(module_lower) >= 3:
+                self._module_to_fids.setdefault(module_lower, []).append(fid)
         for e in index.calls:
             if e.caller in index.functions:
                 if e.callee in index.functions:
@@ -128,13 +139,16 @@ class Locator:
         hay = f"{entry.raw} {entry.logger} {entry.module}".lower()
         # Build a set of words in the haystack for fast lookup
         hay_words = set(re.findall(r'[a-z\u4e00-\u9fff]{3,}', hay))
-        # Only check functions whose names appear as words in the haystack
-        for fid, fn in self.index.functions.items():
-            name_lower = fn.name.lower()
-            if len(name_lower) >= 3 and name_lower in hay_words:
-                add(fid, 25.0, "function name appears in log evidence")
-            elif len(fn.module) >= 3 and fn.module.lower() in hay_words:
-                add(fid, 15.0, "module name appears in log evidence")
+        # Use pre-built indexes to find matching functions
+        for word in hay_words:
+            # Check function names
+            if word in self._func_name_to_fids:
+                for fid in self._func_name_to_fids[word]:
+                    add(fid, 25.0, "function name appears in log evidence")
+            # Check module names
+            if word in self._module_to_fids:
+                for fid in self._module_to_fids[word]:
+                    add(fid, 15.0, "module name appears in log evidence")
 
         # Context boost when traceback functions are caller/callee neighbors.
         frame_names = {f.function for f in entry.stack_frames}
