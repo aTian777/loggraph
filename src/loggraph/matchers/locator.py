@@ -179,7 +179,7 @@ class Locator:
                 if entry.logger and (entry.logger in fn.module or entry.logger in fn.qualname):
                     score += 5.0
                 add(site.function_id, score, f"template match: {site.template!r}", site.line, lid)
-            elif len(msg) > 10 and template_len > 10:
+            elif len(msg) > 15 and template_len > 15:
                 # Only do fuzzy matching for reasonably long messages
                 sim = similarity(site.template, msg)
                 if sim >= 0.72:
