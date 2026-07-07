@@ -181,10 +181,13 @@ class Locator:
                 add(site.function_id, score, f"template match: {site.template!r}", site.line, lid)
             elif len(msg) > 15 and template_len > 15:
                 # Only do fuzzy matching for reasonably long messages
-                sim = similarity(site.template, msg)
-                if sim >= 0.72:
-                    score = 45.0 + (sim * 35.0)
-                    add(site.function_id, score, f"fuzzy template similarity {sim:.2f}: {site.template!r}", site.line, lid)
+                # Quick length check before expensive similarity calculation
+                len_diff = abs(len(msg) - template_len)
+                if len_diff < max(len(msg), template_len) * 0.5:
+                    sim = similarity(site.template, msg)
+                    if sim >= 0.72:
+                        score = 45.0 + (sim * 35.0)
+                        add(site.function_id, score, f"fuzzy template similarity {sim:.2f}: {site.template!r}", site.line, lid)
 
         # Function/module names appearing in message/logger.
         # Pre-compute lowercase haystack once
