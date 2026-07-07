@@ -39,9 +39,14 @@ Optimize LogGraph log analysis/retrieval speed without reducing correctness. The
 - Jaccard similarity: checks_failed - broke test correctness (gave 0.6 instead of >0.7).
 - Function name index for traceback: discarded - slower than previous (12,517ms vs 10,081ms).
 - More aggressive keyword filtering: 2,680ms (98% faster) - lowered threshold from 15 to 10 chars.
+- Split-based keyword extraction: 2,568ms (98.3% faster) - use split() instead of regex for message keywords.
+- Function name/module indexes: 904ms (99.4% faster) - pre-build indexes for O(1) lookups instead of iterating all functions.
+- Qualname/filename indexes: 895ms (99.4% faster) - add indexes for structured evidence and traceback matching.
+- Inverted index for log sites: discarded - severe regression (49,583ms vs 895ms).
+- More aggressive keyword filtering (5 chars): 736ms (99.5% faster) - lowered threshold from 10 to 5 chars.
 
 ## Final Result
-**98% speedup**: 148,153ms → 2,680ms (55× faster)
+**99.5% speedup**: 148,153ms → 736ms (201× faster)
 - Target was 50% faster (74,077ms)
-- Achieved 98% faster (2,680ms)
+- Achieved 99.5% faster (736ms)
 - All correctness checks pass (bottle_count=4, tests pass, accuracy ≥90%)

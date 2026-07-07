@@ -16,6 +16,8 @@ class Locator:
         self._compiled_regex: dict[str, re.Pattern] = {}
         # Build keyword index for fast filtering
         self._site_keywords: dict[str, set[str]] = {}
+        # Pre-build log site to function mapping to avoid repeated lookups
+        self._site_to_function: dict[str, object] = {}
         # Build function name index for fast name matching
         self._func_name_to_fids: dict[str, list[str]] = {}
         self._module_to_fids: dict[str, list[str]] = {}
@@ -28,6 +30,10 @@ class Locator:
             # Extract keywords from template (words >= 4 chars)
             keywords = {w for w in re.findall(r'[A-Za-z\u4e00-\u9fff]{4,}', site.template.lower())}
             self._site_keywords[lid] = keywords
+            # Pre-map log site to its function
+            fn = index.functions.get(site.function_id)
+            if fn:
+                self._site_to_function[lid] = fn
         # Build function name and module indexes
         self._func_qualname_to_fids: dict[str, list[str]] = {}
         self._filename_to_fids: dict[str, list[str]] = {}
@@ -140,7 +146,7 @@ class Locator:
         msg_keywords = {w for w in msg_lower.split() if len(w) >= 4 and w.isalnum()}
         
         for lid, site in self.index.log_sites.items():
-            fn = self.index.functions.get(site.function_id)
+            fn = self._site_to_function.get(lid)
             if not fn:
                 continue
             
