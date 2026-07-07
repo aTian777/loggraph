@@ -18,15 +18,19 @@ class Locator:
         self._site_keywords: dict[str, set[str]] = {}
         # Pre-build log site to function mapping to avoid repeated lookups
         self._site_to_function: dict[str, object] = {}
+        # Pre-build combined site info for faster iteration
+        self._site_info: dict[str, tuple] = {}
         # Build function name index for fast name matching
         self._func_name_to_fids: dict[str, list[str]] = {}
         self._module_to_fids: dict[str, list[str]] = {}
         for lid, site in index.log_sites.items():
             if site.regex:
                 try:
-                    self._compiled_regex[lid] = re.compile(site.regex)
+                    compiled = re.compile(site.regex)
                 except re.error:
-                    pass
+                    compiled = None
+            else:
+                compiled = None
             # Extract keywords from template (words >= 4 chars)
             keywords = {w for w in re.findall(r'[A-Za-z\u4e00-\u9fff]{4,}', site.template.lower())}
             self._site_keywords[lid] = keywords
@@ -34,6 +38,8 @@ class Locator:
             fn = index.functions.get(site.function_id)
             if fn:
                 self._site_to_function[lid] = fn
+                # Pre-build combined info: (function, compiled_regex, keywords, template_len)
+                self._site_info[lid] = (fn, compiled, keywords, len(site.template))
         # Build function name and module indexes
         self._func_qualname_to_fids: dict[str, list[str]] = {}
         self._filename_to_fids: dict[str, list[str]] = {}
@@ -149,17 +155,17 @@ class Locator:
                 msg_keywords.add(word)
         
         for lid, site in self.index.log_sites.items():
-            fn = self._site_to_function.get(lid)
-            if not fn:
+            # Get pre-combined site info
+            site_info = self._site_info.get(lid)
+            if not site_info:
                 continue
+            fn, compiled, site_kw, template_len = site_info
             
             # Fast keyword filter: skip if no shared keywords (unless template is very short)
-            site_kw = self._site_keywords.get(lid, set())
-            if site_kw and msg_keywords and not (site_kw & msg_keywords) and len(site.template) > 3:
+            if site_kw and msg_keywords and not (site_kw & msg_keywords) and template_len > 3:
                 continue
             
             # Use pre-compiled regex for fast matching
-            compiled = self._compiled_regex.get(lid)
             matched = False
             if compiled:
                 matched = compiled.match(msg_normalized) is not None
@@ -173,7 +179,7 @@ class Locator:
                 if entry.logger and (entry.logger in fn.module or entry.logger in fn.qualname):
                     score += 5.0
                 add(site.function_id, score, f"template match: {site.template!r}", site.line, lid)
-            elif len(msg) > 10 and len(site.template) > 10:
+            elif len(msg) > 10 and template_len > 10:
                 # Only do fuzzy matching for reasonably long messages
                 sim = similarity(site.template, msg)
                 if sim >= 0.72:
