@@ -188,7 +188,11 @@ class Locator:
                 # Quick length check before expensive similarity calculation
                 len_diff = abs(len(msg) - template_len)
                 if len_diff < max(len(msg), template_len) * 0.5:
-                    sim = similarity(site.template, msg)
+                    # Fast path: if strings are identical after normalization, skip similarity
+                    if msg_normalized == site.template:
+                        sim = 1.0
+                    else:
+                        sim = similarity(site.template, msg)
                     if sim >= 0.72:
                         score = 45.0 + (sim * 35.0)
                         add(site.function_id, score, f"fuzzy template similarity {sim:.2f}: {site.template!r}", site.line, lid)
