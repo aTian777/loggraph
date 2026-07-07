@@ -7,6 +7,15 @@ from .traceback import parse_traceback
 
 LEVELS = r"DEBUG|INFO|WARNING|WARN|ERROR|EXCEPTION|CRITICAL|FATAL"
 
+# Pre-compile regex patterns for performance
+_PATTERNS = [
+    re.compile(rf"(?P<ts>\d{{4}}-\d{{2}}-\d{{2}}[ T]\S+)\s+(?P<level>{LEVELS})\s+(?P<logger>[\w.$:-]+)?\s*[:-]?\s*(?P<msg>.*)", re.I),
+    re.compile(rf"(?P<level>{LEVELS})\s+\[(?P<logger>[^\]]+)\]\s+(?P<msg>.*)", re.I),
+    re.compile(rf"(?P<level>{LEVELS})\s*[:-]\s*(?P<msg>.*)", re.I),
+]
+_SPLIT_PATTERN = re.compile(rf"(\d{{4}}-\d{{2}}-\d{{2}}|{LEVELS}\b|\{{)", re.I)
+_TRACEBACK_START = re.compile(r"\w+(Error|Exception|Warning):")
+
 
 def parse_log_text(text: str) -> list[LogEntry]:
     blocks = _split_blocks(text)
@@ -58,13 +67,8 @@ def _parse_json(line: str) -> LogEntry | None:
 
 
 def _parse_plain(line: str) -> LogEntry | None:
-    patterns = [
-        rf"(?P<ts>\d{{4}}-\d{{2}}-\d{{2}}[ T]\S+)\s+(?P<level>{LEVELS})\s+(?P<logger>[\w.$:-]+)?\s*[:-]?\s*(?P<msg>.*)",
-        rf"(?P<level>{LEVELS})\s+\[(?P<logger>[^\]]+)\]\s+(?P<msg>.*)",
-        rf"(?P<level>{LEVELS})\s*[:-]\s*(?P<msg>.*)",
-    ]
-    for p in patterns:
-        m = re.match(p, line, re.I)
+    for p in _PATTERNS:
+        m = p.match(line)
         if m:
             gd = m.groupdict()
             return LogEntry(raw=line, message=(gd.get("msg") or "").strip(), level=(gd.get("level") or "").upper(), timestamp=gd.get("ts") or "", logger=gd.get("logger") or "")
@@ -77,14 +81,14 @@ def _split_blocks(text: str) -> list[str]:
     cur: list[str] = []
     in_tb = False
     for line in lines:
-        starts = bool(re.match(rf"(\d{{4}}-\d{{2}}-\d{{2}}|{LEVELS}\b|\{{)", line, re.I))
+        starts = bool(_SPLIT_PATTERN.match(line))
         if cur and starts and not in_tb:
             blocks.append("\n".join(cur))
             cur = []
         cur.append(line)
         if line.startswith("Traceback (most recent call last):"):
             in_tb = True
-        elif in_tb and re.match(r"\w+(Error|Exception|Warning):", line.strip()):
+        elif in_tb and _TRACEBACK_START.match(line.strip()):
             in_tb = False
     if cur:
         blocks.append("\n".join(cur))
