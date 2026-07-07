@@ -23,6 +23,8 @@ class Locator:
         # Build function name index for fast name matching
         self._func_name_to_fids: dict[str, list[str]] = {}
         self._module_to_fids: dict[str, list[str]] = {}
+        # Pre-compile keyword extraction pattern
+        keyword_pattern = re.compile(r'[A-Za-z\u4e00-\u9fff]{4,}')
         for lid, site in index.log_sites.items():
             if site.regex:
                 try:
@@ -31,8 +33,8 @@ class Locator:
                     compiled = None
             else:
                 compiled = None
-            # Extract keywords from template (words >= 4 chars)
-            keywords = {w for w in re.findall(r'[A-Za-z\u4e00-\u9fff]{4,}', site.template.lower())}
+            # Extract keywords from template (words >= 4 chars) - use pre-compiled pattern
+            keywords = {w for w in keyword_pattern.findall(site.template.lower())}
             self._site_keywords[lid] = keywords
             # Pre-map log site to its function
             fn = index.functions.get(site.function_id)
