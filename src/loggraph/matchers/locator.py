@@ -156,6 +156,8 @@ class Locator:
         entry_level_lower = entry.level.lower() if entry.level else None
         # Cache entry logger to avoid repeated attribute access
         entry_logger = entry.logger
+        # Cache message length to avoid repeated len() calls
+        msg_len = len(msg)
         
         for lid, site_info in self._site_info.items():
             fn, compiled, site_kw, template_len, site = site_info
