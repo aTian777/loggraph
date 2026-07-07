@@ -125,12 +125,14 @@ class Locator:
         # Function/module names appearing in message/logger.
         # Pre-compute lowercase haystack once
         hay = f"{entry.raw} {entry.logger} {entry.module}".lower()
-        # Only check functions with reasonably short names (likely to appear in logs)
+        # Build a set of words in the haystack for fast lookup
+        hay_words = set(re.findall(r'[a-z\u4e00-\u9fff]{3,}', hay))
+        # Only check functions whose names appear as words in the haystack
         for fid, fn in self.index.functions.items():
             name_lower = fn.name.lower()
-            if len(name_lower) >= 3 and (name_lower in hay or fn.qualname.lower() in hay):
+            if len(name_lower) >= 3 and name_lower in hay_words:
                 add(fid, 25.0, "function name appears in log evidence")
-            elif len(fn.module) >= 3 and fn.module.lower() in hay:
+            elif len(fn.module) >= 3 and fn.module.lower() in hay_words:
                 add(fid, 15.0, "module name appears in log evidence")
 
         # Context boost when traceback functions are caller/callee neighbors.
