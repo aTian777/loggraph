@@ -141,9 +141,12 @@ class Locator:
         # Logger template matching.
         msg = entry.message or entry.raw
         msg_normalized = normalize_text(msg)
-        # Extract keywords from message for fast filtering - use split instead of regex for speed
+        # Extract keywords from message for fast filtering - optimize by avoiding regex
         msg_lower = msg_normalized.lower()
-        msg_keywords = {w for w in msg_lower.split() if len(w) >= 4 and w.isalnum()}
+        msg_keywords = set()
+        for word in msg_lower.split():
+            if len(word) >= 4 and word.isalnum():
+                msg_keywords.add(word)
         
         for lid, site in self.index.log_sites.items():
             fn = self._site_to_function.get(lid)
