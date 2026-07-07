@@ -38,8 +38,8 @@ class Locator:
             fn = index.functions.get(site.function_id)
             if fn:
                 self._site_to_function[lid] = fn
-                # Pre-build combined info: (function, compiled_regex, keywords, template_len)
-                self._site_info[lid] = (fn, compiled, keywords, len(site.template))
+                # Pre-build combined info: (function, compiled_regex, keywords, template_len, site)
+                self._site_info[lid] = (fn, compiled, keywords, len(site.template), site)
         # Build function name and module indexes
         self._func_qualname_to_fids: dict[str, list[str]] = {}
         self._filename_to_fids: dict[str, list[str]] = {}
@@ -155,8 +155,7 @@ class Locator:
                 msg_keywords.add(word)
         
         for lid, site_info in self._site_info.items():
-            fn, compiled, site_kw, template_len = site_info
-            site = self.index.log_sites[lid]
+            fn, compiled, site_kw, template_len, site = site_info
             
             # Fast keyword filter: skip if no shared keywords (unless template is very short)
             if site_kw and msg_keywords and not (site_kw & msg_keywords) and template_len > 3:
