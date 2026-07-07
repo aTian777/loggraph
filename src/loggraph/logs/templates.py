@@ -61,4 +61,15 @@ def similarity(a: str, b: str) -> float:
         return 0.0
     if ca in cb or cb in ca:
         return 0.95
+    # Fast path: if lengths differ too much, skip expensive SequenceMatcher
+    len_ratio = min(len(ca), len(cb)) / max(len(ca), len(cb)) if max(len(ca), len(cb)) > 0 else 0
+    if len_ratio < 0.4:
+        return 0.0
+    # For very similar strings, use word overlap as fast approximation
+    words_a = set(ca.split())
+    words_b = set(cb.split())
+    if words_a and words_b:
+        overlap = len(words_a & words_b) / max(len(words_a), len(words_b))
+        if overlap > 0.8:
+            return 0.85 + (overlap - 0.8) * 0.5  # Scale to 0.85-0.95 range
     return SequenceMatcher(None, ca, cb).ratio()
