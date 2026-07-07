@@ -160,7 +160,8 @@ class Locator:
             fn, compiled, site_kw, template_len, site = site_info
             
             # Fast keyword filter: skip if no shared keywords (unless template is very short)
-            if site_kw and msg_keywords and not (site_kw & msg_keywords) and template_len > 3:
+            # Optimize by using isdisjoint() which is faster than intersection for non-overlapping sets
+            if site_kw and msg_keywords and template_len > 3 and site_kw.isdisjoint(msg_keywords):
                 continue
             
             # Use pre-compiled regex for fast matching
