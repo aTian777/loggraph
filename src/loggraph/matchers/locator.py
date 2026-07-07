@@ -155,6 +155,8 @@ class Locator:
         for word in msg_lower.split():
             if len(word) >= 4 and word.isalnum():
                 msg_keywords.add(word)
+        # Cache entry level to avoid repeated lower() calls
+        entry_level_lower = entry.level.lower() if entry.level else None
         
         for lid, site_info in self._site_info.items():
             fn, compiled, site_kw, template_len, site = site_info
@@ -174,7 +176,7 @@ class Locator:
             
             if matched:
                 score = 85.0
-                if entry.level and site.level and entry.level.lower().startswith(site.level.lower()[:4]):
+                if entry_level_lower and site.level and entry_level_lower.startswith(site.level.lower()[:4]):
                     score += 8.0
                 if entry.logger and (entry.logger in fn.module or entry.logger in fn.qualname):
                     score += 5.0
