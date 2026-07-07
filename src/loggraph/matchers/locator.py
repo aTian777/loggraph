@@ -14,12 +14,17 @@ class Locator:
         self._callees: dict[str, set[str]] = {}
         # Pre-compile regex patterns for fast matching
         self._compiled_regex: dict[str, re.Pattern] = {}
+        # Build keyword index for fast filtering
+        self._site_keywords: dict[str, set[str]] = {}
         for lid, site in index.log_sites.items():
             if site.regex:
                 try:
                     self._compiled_regex[lid] = re.compile(site.regex)
                 except re.error:
                     pass
+            # Extract keywords from template (words >= 4 chars)
+            keywords = {w for w in re.findall(r'[A-Za-z\u4e00-\u9fff]{4,}', site.template.lower())}
+            self._site_keywords[lid] = keywords
         for e in index.calls:
             if e.caller in index.functions:
                 if e.callee in index.functions:
@@ -82,10 +87,19 @@ class Locator:
         # Logger template matching.
         msg = entry.message or entry.raw
         msg_normalized = normalize_text(msg)
+        # Extract keywords from message for fast filtering
+        msg_keywords = {w for w in re.findall(r'[A-Za-z\u4e00-\u9fff]{4,}', msg_normalized.lower())}
+        
         for lid, site in self.index.log_sites.items():
             fn = self.index.functions.get(site.function_id)
             if not fn:
                 continue
+            
+            # Fast keyword filter: skip if no shared keywords (unless template is very short)
+            site_kw = self._site_keywords.get(lid, set())
+            if site_kw and msg_keywords and not (site_kw & msg_keywords) and len(site.template) > 15:
+                continue
+            
             # Use pre-compiled regex for fast matching
             compiled = self._compiled_regex.get(lid)
             matched = False
