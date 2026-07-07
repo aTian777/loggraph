@@ -205,13 +205,24 @@ class Locator:
         # Context boost when traceback functions are caller/callee neighbors.
         frame_names = {f.function for f in entry.stack_frames}
         if frame_names:
-            for fid, cand in list(scores.items()):
-                neighbors = self._callers.get(fid, set()) | self._callees.get(fid, set())
-                for n in neighbors:
-                    fn = self.index.functions.get(n)
-                    if fn and fn.name in frame_names:
-                        cand.score += 10.0
-                        cand.reasons.append("call graph neighbor appears in traceback")
+            for fid, cand in scores.items():
+                # Get neighbors more efficiently
+                callers = self._callers.get(fid)
+                callees = self._callees.get(fid)
+                if callers:
+                    for n in callers:
+                        fn = self.index.functions.get(n)
+                        if fn and fn.name in frame_names:
+                            cand.score += 10.0
+                            cand.reasons.append("call graph neighbor appears in traceback")
+                            break
+                if callees:
+                    for n in callees:
+                        fn = self.index.functions.get(n)
+                        if fn and fn.name in frame_names:
+                            cand.score += 10.0
+                            cand.reasons.append("call graph neighbor appears in traceback")
+                            break
 
         ranked = sorted(scores.values(), key=lambda c: (-c.score, c.file, c.line))
         return ranked[:top]
