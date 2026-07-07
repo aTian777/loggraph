@@ -31,4 +31,9 @@ Optimize LogGraph log analysis/retrieval speed without reducing correctness. The
 - The real-log benchmark must continue reporting `bottle_count=4`.
 
 ## What's Been Tried
-- Baseline: initial implementation scans all log sites for each app log line and calls template/fuzzy helpers repeatedly.
+- Baseline: 148,153ms - initial implementation scans all log sites for each app log line and calls template/fuzzy helpers repeatedly.
+- Pre-compile regex: 101,033ms (32% faster) - pre-compile regex at Locator init, skip fuzzy for short messages.
+- Keyword filtering: 25,007ms (83% faster) - extract keywords from template and message, skip log sites with no shared keywords.
+- Hybrid similarity: 11,333ms (92% faster) - fast length check, word overlap for high similarity, SequenceMatcher fallback.
+- Word set lookup: 10,081ms (93% faster) - extract words from haystack into set, use set membership instead of substring search.
+- Jaccard similarity: checks_failed - broke test correctness (gave 0.6 instead of >0.7).

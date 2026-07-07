@@ -97,7 +97,7 @@ class Locator:
             
             # Fast keyword filter: skip if no shared keywords (unless template is very short)
             site_kw = self._site_keywords.get(lid, set())
-            if site_kw and msg_keywords and not (site_kw & msg_keywords) and len(site.template) > 15:
+            if site_kw and msg_keywords and not (site_kw & msg_keywords) and len(site.template) > 10:
                 continue
             
             # Use pre-compiled regex for fast matching
