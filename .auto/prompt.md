@@ -37,3 +37,11 @@ Optimize LogGraph log analysis/retrieval speed without reducing correctness. The
 - Hybrid similarity: 11,333ms (92% faster) - fast length check, word overlap for high similarity, SequenceMatcher fallback.
 - Word set lookup: 10,081ms (93% faster) - extract words from haystack into set, use set membership instead of substring search.
 - Jaccard similarity: checks_failed - broke test correctness (gave 0.6 instead of >0.7).
+- Function name index for traceback: discarded - slower than previous (12,517ms vs 10,081ms).
+- More aggressive keyword filtering: 2,680ms (98% faster) - lowered threshold from 15 to 10 chars.
+
+## Final Result
+**98% speedup**: 148,153ms → 2,680ms (55× faster)
+- Target was 50% faster (74,077ms)
+- Achieved 98% faster (2,680ms)
+- All correctness checks pass (bottle_count=4, tests pass, accuracy ≥90%)
