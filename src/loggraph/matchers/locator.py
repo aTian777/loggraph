@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from loggraph.models import CodeIndex, LogEntry, Candidate
-from loggraph.logs.templates import template_matches, similarity
+from loggraph.logs.templates import template_matches, similarity, normalize_text
 from loggraph.logs.traceback import filename_matches
 
 
@@ -11,6 +12,14 @@ class Locator:
         self.index = index
         self._callers: dict[str, set[str]] = {}
         self._callees: dict[str, set[str]] = {}
+        # Pre-compile regex patterns for fast matching
+        self._compiled_regex: dict[str, re.Pattern] = {}
+        for lid, site in index.log_sites.items():
+            if site.regex:
+                try:
+                    self._compiled_regex[lid] = re.compile(site.regex)
+                except re.error:
+                    pass
         for e in index.calls:
             if e.caller in index.functions:
                 if e.callee in index.functions:
@@ -72,29 +81,42 @@ class Locator:
 
         # Logger template matching.
         msg = entry.message or entry.raw
+        msg_normalized = normalize_text(msg)
         for lid, site in self.index.log_sites.items():
             fn = self.index.functions.get(site.function_id)
             if not fn:
                 continue
-            if template_matches(site.template, msg):
+            # Use pre-compiled regex for fast matching
+            compiled = self._compiled_regex.get(lid)
+            matched = False
+            if compiled:
+                matched = compiled.match(msg_normalized) is not None
+            else:
+                matched = template_matches(site.template, msg)
+            
+            if matched:
                 score = 85.0
                 if entry.level and site.level and entry.level.lower().startswith(site.level.lower()[:4]):
                     score += 8.0
                 if entry.logger and (entry.logger in fn.module or entry.logger in fn.qualname):
                     score += 5.0
                 add(site.function_id, score, f"template match: {site.template!r}", site.line, lid)
-            else:
+            elif len(msg) > 10 and len(site.template) > 10:
+                # Only do fuzzy matching for reasonably long messages
                 sim = similarity(site.template, msg)
                 if sim >= 0.72:
                     score = 45.0 + (sim * 35.0)
                     add(site.function_id, score, f"fuzzy template similarity {sim:.2f}: {site.template!r}", site.line, lid)
 
         # Function/module names appearing in message/logger.
+        # Pre-compute lowercase haystack once
         hay = f"{entry.raw} {entry.logger} {entry.module}".lower()
+        # Only check functions with reasonably short names (likely to appear in logs)
         for fid, fn in self.index.functions.items():
-            if fn.name.lower() in hay or fn.qualname.lower() in hay:
+            name_lower = fn.name.lower()
+            if len(name_lower) >= 3 and (name_lower in hay or fn.qualname.lower() in hay):
                 add(fid, 25.0, "function name appears in log evidence")
-            if fn.module.lower() in hay:
+            elif len(fn.module) >= 3 and fn.module.lower() in hay:
                 add(fid, 15.0, "module name appears in log evidence")
 
         # Context boost when traceback functions are caller/callee neighbors.

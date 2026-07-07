@@ -1,1 +1,2 @@
 {"type":"config","name":"Improve LogGraph retrieval speed by 50%","metricName":"total_ms","metricUnit":"ms","bestDirection":"lower"}
+{"run":2,"commit":"c2460ea","metric":148153.063,"metrics":{"matched_lines":1055,"bottle_count":4},"status":"keep","description":"Baseline: analyze smartroom log with cached index","timestamp":1783391155908,"segment":1,"confidence":null,"asi":{"hypothesis":"baseline measurement","matched_lines":1055,"bottle_count":4}}
