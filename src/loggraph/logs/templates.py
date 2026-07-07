@@ -8,7 +8,7 @@ WILDCARD = r".+?"
 
 def normalize_text(text: str) -> str:
     text = str(text or "")
-    text = re.sub(r"\s+", " ", text.strip())
+    text = " ".join(text.split())
     return text
 
 
