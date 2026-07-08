@@ -50,12 +50,12 @@ export default function (pi: ExtensionAPI) {
       "Use loggraph_analyze for log files after a LogGraph cache exists instead of writing ad-hoc parsing scripts.",
     ],
     parameters: Type.Object({
-      project: Type.String({ description: "Project root directory." }),
+      project: Type.Optional(Type.String({ description: "Project root directory. Defaults to the current working directory." })),
       src: Type.Optional(Type.String({ description: "Source directory to index. Defaults to project root." })),
       out: Type.Optional(Type.String({ description: "Index output path. Defaults to <project>/.loggraph/index.json." })),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const project = normalizePath(ctx.cwd, params.project);
+      const project = params.project ? normalizePath(ctx.cwd, params.project) : ctx.cwd;
       const args = ["init", project];
       if (params.src) args.push("--src", normalizePath(ctx.cwd, params.src));
       if (params.out) args.push("--out", normalizePath(ctx.cwd, params.out));
@@ -124,14 +124,10 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("loggraph-init", {
-    description: "Initialize LogGraph cache: /loggraph-init <project> [src]",
+    description: "Initialize LogGraph cache: /loggraph-init [project] [src]",
     handler: async (args, ctx) => {
       const [projectArg, srcArg] = args.trim().split(/\s+/).filter(Boolean);
-      if (!projectArg) {
-        ctx.ui.notify("Usage: /loggraph-init <project> [src]", "error");
-        return;
-      }
-      const project = normalizePath(ctx.cwd, projectArg);
+      const project = projectArg ? normalizePath(ctx.cwd, projectArg) : ctx.cwd;
       const cliArgs = ["init", project];
       if (srcArg) cliArgs.push("--src", normalizePath(ctx.cwd, srcArg));
       const stdout = await runLogGraph(pi, cliArgs, ctx.cwd, undefined);
