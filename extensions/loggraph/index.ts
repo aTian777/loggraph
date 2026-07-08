@@ -215,6 +215,8 @@ export default function (pi: ExtensionAPI) {
       showMatches: Type.Optional(Type.Number({ description: "How many matched lines to show in the compact result.", default: 10 })),
       allLines: Type.Optional(Type.Boolean({ description: "Analyze all log lines instead of app-tag lines only.", default: false })),
       context: Type.Optional(Type.Number({ description: "Include N log lines before/after suspicious events and source matches.", default: 3 })),
+      sourceContext: Type.Optional(Type.Number({ description: "Include N source lines around each candidate.", default: 3 })),
+      detail: Type.Optional(Type.Union([Type.Literal("brief"), Type.Literal("normal"), Type.Literal("full")], { description: "Report detail level. Defaults to normal." })),
       format: Type.Optional(Type.Union([Type.Literal("markdown"), Type.Literal("json")], { description: "Output format. Defaults to markdown for agent readability." })),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -236,6 +238,10 @@ export default function (pi: ExtensionAPI) {
         String(params.showMatches ?? 10),
         "--context",
         String(params.context ?? 3),
+        "--source-context",
+        String(params.sourceContext ?? 3),
+        "--detail",
+        params.detail ?? "normal",
         "--format",
         params.format ?? "markdown",
       ];
@@ -336,6 +342,13 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           cliArgs.push("--from-log", logFile.file, "--name", "success", "--all-lines");
+        } else if (sub === "apply") {
+          const patchFile = resolveExistingFilePrefix(ctx.cwd, rest);
+          if (!patchFile) {
+            ctx.ui.notify("Usage: /loggraph profile apply <patch.yaml>", "error");
+            return;
+          }
+          cliArgs.push("--patch", patchFile.file, "--force");
         }
         try {
           const stdout = await runLogGraph(pi, cliArgs, ctx.cwd, undefined);

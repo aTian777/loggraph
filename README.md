@@ -54,15 +54,16 @@ loggraph locate /tmp/loggraph-index.json --log-file app.log --top 3
 ### Analyze a log as a runtime report
 
 ```bash
-loggraph analyze . --log-file app.log --format markdown --context 3 --all-lines
+loggraph analyze . --log-file app.log --format markdown --detail normal --context 3 --source-context 3 --all-lines
 ```
 
-The report includes runtime events, session timelines, duration observations, rule-based hypotheses, missing expected events from `.loggraph/profile.yaml`, context windows around suspicious lines, and likely source areas.
+The report includes runtime events, session timelines, duration observations, rule-based hypotheses, source excerpts for likely code locations, missing expected events from `.loggraph/profile.yaml`, context windows around suspicious lines, and likely source areas. Use `--detail brief|normal|full` to control report verbosity.
 
 ### Compare a successful log with a failed log
 
 ```bash
 loggraph compare . --baseline success.log --target failed.log --all-lines
+loggraph compare . --baseline success.log --target failed.log --fail-on-regression
 ```
 
 This highlights shared events, session-aligned differences, events missing from the failed target, extra target events, duration anomalies, rule-based hypotheses, and missing expected sequence items.
@@ -81,6 +82,8 @@ This scores indexed source log sites for session keys, duration fields, state ma
 loggraph profile suggest .
 loggraph profile init .
 loggraph profile refine . --log-file failed.log --all-lines
+loggraph profile refine . --log-file failed.log --all-lines --apply
+loggraph profile apply . --patch patch.yaml --force
 loggraph profile sequence . --from-log success.log --name delivery_success --all-lines
 ```
 

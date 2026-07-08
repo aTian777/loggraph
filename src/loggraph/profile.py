@@ -67,6 +67,42 @@ def render_profile_suggestion(profile: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def merge_manual_profiles(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base or {})
+    merged["session_keys"] = _unique((base or {}).get("session_keys", []) + (patch or {}).get("session_keys", []))
+    merged["states"] = _unique((base or {}).get("states", []) + (patch or {}).get("states", []))
+    events = dict((base or {}).get("events") or {})
+    events.update((patch or {}).get("events") or {})
+    merged["events"] = events
+    sequences = dict((base or {}).get("expected_sequences") or {})
+    sequences.update((patch or {}).get("expected_sequences") or {})
+    merged["expected_sequences"] = sequences
+    return merged
+
+
+def render_manual_profile(profile: dict[str, Any]) -> str:
+    lines = ["session_keys:"]
+    for key in profile.get("session_keys", []):
+        lines.append(f"  - {key}")
+    lines.extend(["", "states:"])
+    for state in profile.get("states", []):
+        lines.append(f"  - {state}")
+    lines.extend(["", "events:"])
+    for name, spec in (profile.get("events") or {}).items():
+        lines.append(f"  {name}:")
+        if isinstance(spec, dict):
+            lines.append(f"    type: {spec.get('type', name)}")
+            lines.append("    patterns:")
+            for pattern in spec.get("patterns", []):
+                lines.append(f"      - {pattern}")
+    lines.extend(["", "expected_sequences:"])
+    for name, sequence in (profile.get("expected_sequences") or {}).items():
+        lines.append(f"  {name}:")
+        for item in sequence:
+            lines.append(f"    - {item}")
+    return "\n".join(lines) + "\n"
+
+
 def parse_simple_yaml(text: str) -> dict[str, Any]:
     """Parse the small YAML subset LogGraph profiles need.
 

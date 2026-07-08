@@ -12,7 +12,7 @@ from loggraph.matchers.locator import Locator
 from loggraph.graph.render import render
 from loggraph.evaluation.runner import evaluate
 from loggraph.analyzer import analyze_log, compare_logs, compact_summary, default_index_path, write_analysis
-from loggraph.profile import default_profile_path, render_profile_suggestion
+from loggraph.profile import default_profile_path, load_project_profile, merge_manual_profiles, parse_simple_yaml, render_manual_profile, render_profile_suggestion
 from loggraph.quality import audit_index, refine_profile, render_audit_report, sequence_from_log
 
 
@@ -86,7 +86,7 @@ def cmd_analyze(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
     out = Path(args.out) if args.out else Path(args.project) / ".loggraph" / (Path(args.log_file).stem + ".analysis.json")
     out.parent.mkdir(parents=True, exist_ok=True)
-    report = analyze_log(index_path, args.log_file, top=args.top, app_only=not args.all_lines, project=args.project, context=args.context)
+    report = analyze_log(index_path, args.log_file, top=args.top, app_only=not args.all_lines, project=args.project, context=args.context, source_context=args.source_context, detail=args.detail)
     write_analysis(report, out)
     summary = compact_summary(report, max_matches=args.show_matches)
     summary["out"] = str(out)
@@ -121,6 +121,9 @@ def cmd_profile_init(args):
 def cmd_profile_refine(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
     report = refine_profile(index_path, args.log_file, project=args.project, all_lines=args.all_lines)
+    if args.apply:
+        apply_profile_patch(args.project, report["patch_yaml"], force=True)
+        report["applied"] = True
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(report["patch_yaml"], encoding="utf-8")
@@ -128,6 +131,12 @@ def cmd_profile_refine(args):
         print(report["patch_yaml"], end="")
     else:
         print(json.dumps(report, ensure_ascii=False, indent=2))
+
+
+def cmd_profile_apply(args):
+    patch_text = Path(args.patch).read_text(encoding="utf-8")
+    profile_path = apply_profile_patch(args.project, patch_text, force=args.force)
+    print(json.dumps({"profile": str(profile_path), "applied": True}, ensure_ascii=False, indent=2))
 
 
 def cmd_profile_sequence(args):
@@ -154,7 +163,7 @@ def cmd_audit(args):
 
 def cmd_compare(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
-    report = compare_logs(index_path, args.baseline, args.target, project=args.project, top=args.top, app_only=not args.all_lines, context=args.context)
+    report = compare_logs(index_path, args.baseline, args.target, project=args.project, top=args.top, app_only=not args.all_lines, context=args.context, detail=args.detail)
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -162,6 +171,20 @@ def cmd_compare(args):
         print(report["report_markdown"])
     else:
         print(json.dumps(report, ensure_ascii=False, indent=2))
+    if args.fail_on_regression and (report.get("duration_anomalies") or report.get("hypotheses") or report.get("missing_in_target")):
+        return 1
+
+
+def apply_profile_patch(project: str, patch_text: str, *, force: bool) -> Path:
+    profile_path = default_profile_path(project)
+    base = load_project_profile(project) if profile_path.exists() else {}
+    patch = parse_simple_yaml(patch_text)
+    merged = merge_manual_profiles(base, patch)
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    if profile_path.exists() and not force:
+        raise SystemExit(f"Profile already exists: {profile_path}. Use --force to overwrite/apply.")
+    profile_path.write_text(render_manual_profile(merged), encoding="utf-8")
+    return profile_path
 
 
 def cmd_render(args):
@@ -223,6 +246,8 @@ def build_parser():
     s.add_argument("--all-lines", action="store_true", help="Analyze all log lines instead of app-tag lines only.")
     s.add_argument("--format", choices=["json", "markdown"], default="json", help="Output compact JSON or a human-readable markdown report.")
     s.add_argument("--context", type=int, default=0, help="Include N log lines before/after suspicious events and source matches.")
+    s.add_argument("--source-context", type=int, default=3, help="Include N source lines around each candidate.")
+    s.add_argument("--detail", choices=["brief", "normal", "full"], default="normal", help="Report detail level.")
     s.set_defaults(func=cmd_analyze)
     s = sub.add_parser("profile")
     profile_sub = s.add_subparsers(dest="profile_cmd", required=True)
@@ -244,7 +269,13 @@ def build_parser():
     pr.add_argument("--all-lines", action="store_true")
     pr.add_argument("--format", choices=["json", "yaml"], default="yaml")
     pr.add_argument("--out", help="Write suggested YAML patch to this path.")
+    pr.add_argument("--apply", action="store_true", help="Apply the suggested patch to <project>/.loggraph/profile.yaml.")
     pr.set_defaults(func=cmd_profile_refine)
+    pa = profile_sub.add_parser("apply")
+    pa.add_argument("project")
+    pa.add_argument("--patch", required=True, help="YAML patch file to merge into .loggraph/profile.yaml.")
+    pa.add_argument("--force", action="store_true", help="Allow updating an existing profile.")
+    pa.set_defaults(func=cmd_profile_apply)
     pq = profile_sub.add_parser("sequence")
     pq.add_argument("project")
     pq.add_argument("--from-log", dest="log_file", required=True)
@@ -267,8 +298,10 @@ def build_parser():
     s.add_argument("--top", type=int, default=3)
     s.add_argument("--all-lines", action="store_true", help="Analyze all log lines instead of app-tag lines only.")
     s.add_argument("--context", type=int, default=0)
+    s.add_argument("--detail", choices=["brief", "normal", "full"], default="normal")
     s.add_argument("--format", choices=["json", "markdown"], default="markdown")
     s.add_argument("--out", help="Write JSON compare report to this path.")
+    s.add_argument("--fail-on-regression", action="store_true", help="Exit with status 1 when regressions/hypotheses are detected.")
     s.set_defaults(func=cmd_compare)
     s = sub.add_parser("render")
     s.add_argument("index")

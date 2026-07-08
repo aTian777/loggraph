@@ -211,6 +211,8 @@ class LogGraphCoreTests(unittest.TestCase):
             self.assertIn("deliveryId", payload["event_profile_summary"]["session_keys"])
             self.assertIn("# LogGraph Findings", payload["report_markdown"])
             self.assertTrue(payload["context_windows"])
+            top_candidate = payload["top_matches"][0]["candidates"][0]
+            self.assertIn("source_excerpt", top_candidate)
             self.assertTrue(payload["runtime_findings"]["suggested_event_rules"])
 
             profile_path = root / ".loggraph" / "profile.yaml"
@@ -280,17 +282,34 @@ class LogGraphCoreTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn("Logging Quality Audit", stdout.getvalue())
 
+            patch_file = root / "patch.yaml"
             stdout = io.StringIO()
             with redirect_stdout(stdout):
-                rc = cli_main(["profile", "refine", str(root), "--log-file", str(target), "--index", str(out), "--all-lines"])
+                rc = cli_main(["profile", "refine", str(root), "--log-file", str(target), "--index", str(out), "--all-lines", "--out", str(patch_file)])
             self.assertEqual(rc, 0)
             self.assertIn("events:", stdout.getvalue())
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["profile", "apply", str(root), "--patch", str(patch_file), "--force"])
+            self.assertEqual(rc, 0)
+            self.assertTrue((root / ".loggraph" / "profile.yaml").exists())
 
             stdout = io.StringIO()
             with redirect_stdout(stdout):
                 rc = cli_main(["profile", "sequence", str(root), "--from-log", str(baseline), "--name", "delivery_success", "--index", str(out), "--all-lines"])
             self.assertEqual(rc, 0)
             self.assertIn("delivery_success", stdout.getvalue())
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["analyze", str(root), "--log-file", str(target), "--index", str(out), "--all-lines", "--format", "markdown", "--detail", "brief"])
+            self.assertEqual(rc, 0)
+            self.assertNotIn("Session timelines", stdout.getvalue())
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["compare", str(root), "--baseline", str(baseline), "--target", str(target), "--index", str(out), "--all-lines", "--fail-on-regression"])
+            self.assertEqual(rc, 1)
 
     def test_cli_init_workers_and_no_incremental_options(self):
         with tempfile.TemporaryDirectory() as tmp:
