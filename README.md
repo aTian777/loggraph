@@ -57,7 +57,7 @@ loggraph locate /tmp/loggraph-index.json --log-file app.log --top 3
 loggraph analyze . --log-file app.log --format markdown --context 3 --all-lines
 ```
 
-The report includes runtime events, session timelines, missing expected events from `.loggraph/profile.yaml`, context windows around suspicious lines, and likely source areas.
+The report includes runtime events, session timelines, duration observations, rule-based hypotheses, missing expected events from `.loggraph/profile.yaml`, context windows around suspicious lines, and likely source areas.
 
 ### Compare a successful log with a failed log
 
@@ -65,7 +65,7 @@ The report includes runtime events, session timelines, missing expected events f
 loggraph compare . --baseline success.log --target failed.log --all-lines
 ```
 
-This highlights shared events, events missing from the failed target, extra target events, and missing expected sequence items.
+This highlights shared events, session-aligned differences, events missing from the failed target, extra target events, duration anomalies, rule-based hypotheses, and missing expected sequence items.
 
 ### Initialize or suggest a project profile
 

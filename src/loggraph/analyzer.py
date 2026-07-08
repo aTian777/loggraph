@@ -60,6 +60,7 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
     ]
 
     runtime_findings = summarize_events(events, profile=event_profile)
+    runtime_findings["hypotheses"] = generate_hypotheses(runtime_findings)
     context_windows = build_context_windows(lines, runtime_findings, matches, context=context)
 
     return {
@@ -132,6 +133,8 @@ def compare_logs(index_path: str | Path, baseline_log: str | Path, target_log: s
     missing = [label for label in baseline_labels if label not in target_labels]
     extra = [label for label in target_labels if label not in baseline_labels]
     shared = [label for label in target_labels if label in baseline_labels]
+    session_comparisons = compare_sessions(baseline, target)
+    duration_anomalies = compare_duration_stats(baseline, target)
     result = {
         "baseline_log": str(baseline_log),
         "target_log": str(target_log),
@@ -140,6 +143,9 @@ def compare_logs(index_path: str | Path, baseline_log: str | Path, target_log: s
         "shared_events": shared,
         "missing_in_target": missing,
         "extra_in_target": extra,
+        "session_comparisons": session_comparisons,
+        "duration_anomalies": duration_anomalies,
+        "hypotheses": generate_compare_hypotheses(session_comparisons, duration_anomalies, target),
     }
     result["report_markdown"] = render_compare_report(result)
     return result
@@ -200,6 +206,20 @@ def render_report(*, log_file: str, index_path: str, analyzed_lines: int, matche
             lines.append(f"### {label}")
             for event in session.get("events", [])[:8]:
                 lines.append(f"- line {event.get('line')}: {event.get('type')} — {event.get('message', '')}")
+    duration_stats = runtime_findings.get("duration_stats", [])
+    if duration_stats:
+        lines.extend(["", "## Duration observations"])
+        for item in duration_stats[:10]:
+            lines.append(f"- `{item['label']}` avg {item['avg_ms']:.1f}ms, max {item['max_ms']:.1f}ms ({item['count']} sample(s))")
+
+    hypotheses = runtime_findings.get("hypotheses", [])
+    if hypotheses:
+        lines.extend(["", "## Hypotheses"])
+        for item in hypotheses[:10]:
+            lines.append(f"- **{item['title']}** (confidence {item['confidence']:.2f})")
+            for evidence in item.get("evidence", [])[:3]:
+                lines.append(f"  - {evidence}")
+
     missing = runtime_findings.get("missing_events", [])
     if missing:
         lines.extend(["", "## Missing expected events"])
@@ -285,9 +305,26 @@ def render_compare_report(result: dict) -> str:
         "## Inputs",
         f"- Baseline: `{result['baseline_log']}`",
         f"- Target: `{result['target_log']}`",
-        "",
-        "## Shared events",
     ]
+    hypotheses = result.get("hypotheses", [])
+    if hypotheses:
+        lines.extend(["", "## Hypotheses"])
+        for item in hypotheses[:10]:
+            lines.append(f"- **{item['title']}** (confidence {item['confidence']:.2f})")
+            for evidence in item.get("evidence", [])[:3]:
+                lines.append(f"  - {evidence}")
+    lines.extend(["", "## Session comparisons"])
+    for item in result.get("session_comparisons", [])[:10]:
+        lines.append(f"### baseline `{item.get('baseline_session') or 'global'}` vs target `{item.get('target_session') or 'global'}`")
+        lines.append(f"- shared: {', '.join(item.get('shared', [])) or 'none'}")
+        lines.append(f"- missing in target: {', '.join(item.get('missing_in_target', [])) or 'none'}")
+        lines.append(f"- extra in target: {', '.join(item.get('extra_in_target', [])) or 'none'}")
+    duration_anomalies = result.get("duration_anomalies", [])
+    if duration_anomalies:
+        lines.extend(["", "## Duration anomalies"])
+        for item in duration_anomalies[:10]:
+            lines.append(f"- `{item['label']}` baseline {item['baseline_avg_ms']:.1f}ms → target {item['target_avg_ms']:.1f}ms ({item['ratio']:.1f}x, +{item['delta_ms']:.1f}ms)")
+    lines.extend(["", "## Shared events"])
     shared = result.get("shared_events", [])
     lines.extend([f"- {item}" for item in shared[:20]] or ["- No shared events detected."])
     lines.extend(["", "## Missing in target"])
@@ -302,6 +339,134 @@ def render_compare_report(result: dict) -> str:
         for item in target_missing[:10]:
             lines.append(f"- session `{item.get('session_id') or 'global'}` sequence `{item.get('sequence')}` missing: {', '.join(item.get('missing', []))}")
     return "\n".join(lines)
+
+
+def generate_hypotheses(runtime_findings: dict) -> list[dict]:
+    hypotheses = []
+    event_types = runtime_findings.get("event_types", {})
+    missing = runtime_findings.get("missing_events", [])
+    if missing and event_types.get("timeout"):
+        hypotheses.append({
+            "title": "Expected follow-up event missing before timeout",
+            "confidence": 0.82,
+            "evidence": [
+                f"timeout events observed: {event_types.get('timeout', 0)}",
+                f"missing expected events: {', '.join(sorted({m for item in missing for m in item.get('missing', [])}))}",
+            ],
+        })
+    if event_types.get("retry", 0) >= 2:
+        hypotheses.append({
+            "title": "Retry loop or repeated recovery path",
+            "confidence": 0.68,
+            "evidence": [f"retry events observed: {event_types.get('retry', 0)}"],
+        })
+    if event_types.get("exception"):
+        hypotheses.append({
+            "title": "Unhandled exception path observed",
+            "confidence": 0.74,
+            "evidence": [f"exception events observed: {event_types.get('exception', 0)}"],
+        })
+    for stat in runtime_findings.get("duration_stats", []):
+        if stat.get("max_ms", 0) >= 10_000:
+            hypotheses.append({
+                "title": f"Long-running stage `{stat['label']}`",
+                "confidence": 0.62,
+                "evidence": [f"max duration {stat['max_ms']:.1f}ms, avg {stat['avg_ms']:.1f}ms"],
+            })
+    return hypotheses
+
+
+def compare_sessions(baseline: dict, target: dict) -> list[dict]:
+    baseline_sessions = baseline.get("runtime_findings", {}).get("session_timelines", [])
+    target_sessions = target.get("runtime_findings", {}).get("session_timelines", [])
+    if not baseline_sessions and not target_sessions:
+        return []
+    target_by_id = {item.get("session_id", ""): item for item in target_sessions}
+    comparisons = []
+    used_targets = set()
+    for idx, base in enumerate(baseline_sessions or [{"session_id": "", "labels": _timeline_labels(baseline)}]):
+        base_id = base.get("session_id", "")
+        target_item = target_by_id.get(base_id)
+        if not target_item and idx < len(target_sessions):
+            target_item = target_sessions[idx]
+        if not target_item:
+            target_item = {"session_id": "", "labels": []}
+        used_targets.add(target_item.get("session_id", ""))
+        base_labels = list(base.get("labels", []))
+        target_labels = list(target_item.get("labels", []))
+        comparisons.append({
+            "baseline_session": base_id,
+            "target_session": target_item.get("session_id", ""),
+            "shared": [label for label in target_labels if label in base_labels],
+            "missing_in_target": [label for label in base_labels if label not in target_labels],
+            "extra_in_target": [label for label in target_labels if label not in base_labels],
+            "baseline_labels": base_labels,
+            "target_labels": target_labels,
+        })
+    for target_item in target_sessions:
+        if target_item.get("session_id", "") in used_targets:
+            continue
+        comparisons.append({
+            "baseline_session": "",
+            "target_session": target_item.get("session_id", ""),
+            "shared": [],
+            "missing_in_target": [],
+            "extra_in_target": list(target_item.get("labels", [])),
+            "baseline_labels": [],
+            "target_labels": list(target_item.get("labels", [])),
+        })
+    return comparisons
+
+
+def compare_duration_stats(baseline: dict, target: dict) -> list[dict]:
+    baseline_stats = {item["label"]: item for item in baseline.get("runtime_findings", {}).get("duration_stats", [])}
+    target_stats = {item["label"]: item for item in target.get("runtime_findings", {}).get("duration_stats", [])}
+    anomalies = []
+    for label, target_item in target_stats.items():
+        base_item = baseline_stats.get(label)
+        if not base_item:
+            continue
+        base_avg = float(base_item.get("avg_ms") or 0)
+        target_avg = float(target_item.get("avg_ms") or 0)
+        if base_avg <= 0:
+            continue
+        ratio = target_avg / base_avg
+        delta = target_avg - base_avg
+        if ratio >= 2.0 and delta >= 500:
+            anomalies.append({
+                "label": label,
+                "baseline_avg_ms": base_avg,
+                "target_avg_ms": target_avg,
+                "delta_ms": delta,
+                "ratio": ratio,
+            })
+    return sorted(anomalies, key=lambda item: (-item["ratio"], -item["delta_ms"]))
+
+
+def generate_compare_hypotheses(session_comparisons: list[dict], duration_anomalies: list[dict], target: dict) -> list[dict]:
+    hypotheses = []
+    for comparison in session_comparisons:
+        missing = comparison.get("missing_in_target", [])
+        target_labels = comparison.get("target_labels", [])
+        if missing and "timeout" in target_labels:
+            hypotheses.append({
+                "title": "Target timed out before completing baseline path",
+                "confidence": 0.84,
+                "evidence": [
+                    f"missing from target: {', '.join(missing)}",
+                    f"target labels: {', '.join(target_labels)}",
+                ],
+            })
+            break
+    if duration_anomalies:
+        top = duration_anomalies[0]
+        hypotheses.append({
+            "title": f"Target duration regression in `{top['label']}`",
+            "confidence": 0.78,
+            "evidence": [f"baseline {top['baseline_avg_ms']:.1f}ms vs target {top['target_avg_ms']:.1f}ms ({top['ratio']:.1f}x)"],
+        })
+    hypotheses.extend(target.get("runtime_findings", {}).get("hypotheses", [])[:3])
+    return hypotheses
 
 
 def _to_int(value: str) -> int:

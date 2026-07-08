@@ -179,14 +179,14 @@ class LogGraphCoreTests(unittest.TestCase):
                 "log = logging.getLogger(__name__)\n"
                 "\n"
                 "def await_pcb():\n"
-                "    log.error('pcb state=AwaitPcb deliveryId=%s timeout')\n"
+                "    log.error('pcb state=AwaitPcb deliveryId=%s duration=%sms timeout')\n"
                 "\n"
                 "def pcb_callback():\n"
                 "    log.info('pcb callback received deliveryId=%s')\n",
                 encoding="utf-8",
             )
             log_file.write_text(
-                "ERROR [app] pcb state=AwaitPcb deliveryId=abc timeout\n"
+                "ERROR [app] pcb state=AwaitPcb deliveryId=abc duration=15200ms timeout\n"
                 "INFO [app] pcb callback received deliveryId=abc\n",
                 encoding="utf-8",
             )
@@ -232,7 +232,7 @@ class LogGraphCoreTests(unittest.TestCase):
                 "    - pcb_result\n",
                 encoding="utf-8",
             )
-            log_file.write_text("ERROR [app] pcb state=AwaitPcb deliveryId=abc timeout\n", encoding="utf-8")
+            log_file.write_text("ERROR [app] pcb state=AwaitPcb deliveryId=abc duration=15200ms timeout\n", encoding="utf-8")
             stdout = io.StringIO()
             with redirect_stdout(stdout):
                 rc = cli_main(["analyze", str(root), "--log-file", str(log_file), "--index", str(out), "--all-lines"])
@@ -241,6 +241,8 @@ class LogGraphCoreTests(unittest.TestCase):
             self.assertTrue(payload["event_profile_summary"]["manual_profile"])
             self.assertTrue(payload["runtime_findings"]["session_timelines"])
             self.assertEqual(payload["runtime_findings"]["missing_events"][0]["missing"], ["pcb_result"])
+            self.assertTrue(payload["runtime_findings"]["duration_stats"])
+            self.assertTrue(payload["runtime_findings"]["hypotheses"])
 
             stdout = io.StringIO()
             with redirect_stdout(stdout):
@@ -258,16 +260,18 @@ class LogGraphCoreTests(unittest.TestCase):
             baseline = root / "success.log"
             target = root / "failed.log"
             baseline.write_text(
-                "ERROR [app] pcb state=AwaitPcb deliveryId=abc timeout\n"
+                "ERROR [app] pcb state=AwaitPcb deliveryId=abc duration=800ms timeout\n"
                 "INFO [app] pcb callback received deliveryId=abc\n",
                 encoding="utf-8",
             )
-            target.write_text("ERROR [app] pcb state=AwaitPcb deliveryId=abc timeout\n", encoding="utf-8")
+            target.write_text("ERROR [app] pcb state=AwaitPcb deliveryId=abc duration=15200ms timeout\n", encoding="utf-8")
             stdout = io.StringIO()
             with redirect_stdout(stdout):
                 rc = cli_main(["compare", str(root), "--baseline", str(baseline), "--target", str(target), "--index", str(out), "--all-lines"])
             self.assertEqual(rc, 0)
             self.assertIn("Missing in target", stdout.getvalue())
+            self.assertIn("Duration anomalies", stdout.getvalue())
+            self.assertIn("Target timed out before completing baseline path", stdout.getvalue())
             self.assertIn("pcb_result", stdout.getvalue())
 
     def test_cli_init_workers_and_no_incremental_options(self):

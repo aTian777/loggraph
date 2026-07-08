@@ -95,6 +95,7 @@ def summarize_events(events: list[RuntimeEvent], *, limit: int = 20, profile: di
         "timeline": timeline,
         "suspicious_events": suspicious[:limit],
         "missing_events": find_missing_events(session_timelines, profile or {}),
+        "duration_stats": summarize_durations(events, profile=profile),
         "suggested_event_rules": suggest_event_rules(events),
     }
 
@@ -154,6 +155,25 @@ def _event_label(event: RuntimeEvent, profile: dict[str, Any]) -> str:
         if raw == name or raw == str(spec.get("type", "")):
             return name
     return raw
+
+
+def summarize_durations(events: list[RuntimeEvent], *, profile: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    grouped: dict[str, list[float]] = {}
+    for event in events:
+        if event.duration_ms is None:
+            continue
+        label = event.state or _event_label(event, profile or {})
+        grouped.setdefault(label, []).append(event.duration_ms)
+    stats = []
+    for label, values in grouped.items():
+        stats.append({
+            "label": label,
+            "count": len(values),
+            "min_ms": min(values),
+            "max_ms": max(values),
+            "avg_ms": sum(values) / len(values),
+        })
+    return sorted(stats, key=lambda item: (-item["avg_ms"], item["label"]))
 
 
 def suggest_event_rules(events: list[RuntimeEvent], *, limit: int = 8) -> list[dict[str, Any]]:
