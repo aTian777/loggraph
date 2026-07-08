@@ -12,6 +12,7 @@ from loggraph.matchers.locator import Locator
 from loggraph.graph.render import render
 from loggraph.evaluation.runner import evaluate
 from loggraph.analyzer import analyze_log, compact_summary, default_index_path, write_analysis
+from loggraph.profile import render_profile_suggestion
 
 
 def cmd_index(args):
@@ -33,8 +34,14 @@ def cmd_init(args):
         except Exception:
             pass  # If loading fails, start fresh
     
+    def emit_progress(event: dict):
+        if args.progress_jsonl:
+            print(json.dumps(event, ensure_ascii=False), file=sys.stderr, flush=True)
+
     indexer = Indexer(max_workers=args.workers, incremental=not args.no_incremental)
-    idx = indexer.build(src, existing_index=existing_index)
+    idx = indexer.build(src, existing_index=existing_index, progress=emit_progress if args.progress_jsonl else None)
+    if args.progress_jsonl:
+        print(json.dumps({"phase": "write_cache", "path": str(out), "message": "Writing index cache"}, ensure_ascii=False), file=sys.stderr, flush=True)
     save_index(idx, out)
     event_profile = idx.metadata.get("event_profile", {})
     print(json.dumps({
@@ -78,7 +85,7 @@ def cmd_analyze(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
     out = Path(args.out) if args.out else Path(args.project) / ".loggraph" / (Path(args.log_file).stem + ".analysis.json")
     out.parent.mkdir(parents=True, exist_ok=True)
-    report = analyze_log(index_path, args.log_file, top=args.top, app_only=not args.all_lines)
+    report = analyze_log(index_path, args.log_file, top=args.top, app_only=not args.all_lines, project=args.project)
     write_analysis(report, out)
     summary = compact_summary(report, max_matches=args.show_matches)
     summary["out"] = str(out)
@@ -86,6 +93,16 @@ def cmd_analyze(args):
         print(summary.get("report_markdown", ""))
     else:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+
+def cmd_profile_suggest(args):
+    index_path = Path(args.index) if args.index else default_index_path(args.project)
+    idx = load_index(index_path)
+    text = render_profile_suggestion(idx.metadata.get("event_profile", {}))
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(text, encoding="utf-8")
+    print(text, end="")
 
 
 def cmd_render(args):
@@ -125,6 +142,7 @@ def build_parser():
     s.add_argument("--out", help="Cache path. Defaults to <project>/.loggraph/index.json.")
     s.add_argument("--workers", type=int, help="Number of parallel workers for indexing. Default: sequential.")
     s.add_argument("--no-incremental", action="store_true", help="Disable incremental indexing and rebuild from scratch.")
+    s.add_argument("--progress-jsonl", action="store_true", help="Emit init progress events as JSON Lines on stderr.")
     s.set_defaults(func=cmd_init)
     s = sub.add_parser("query")
     s.add_argument("index")
@@ -146,6 +164,13 @@ def build_parser():
     s.add_argument("--all-lines", action="store_true", help="Analyze all log lines instead of app-tag lines only.")
     s.add_argument("--format", choices=["json", "markdown"], default="json", help="Output compact JSON or a human-readable markdown report.")
     s.set_defaults(func=cmd_analyze)
+    s = sub.add_parser("profile")
+    profile_sub = s.add_subparsers(dest="profile_cmd", required=True)
+    ps = profile_sub.add_parser("suggest")
+    ps.add_argument("project")
+    ps.add_argument("--index", help="Index cache path. Defaults to <project>/.loggraph/index.json.")
+    ps.add_argument("--out", help="Write suggested profile to this path.")
+    ps.set_defaults(func=cmd_profile_suggest)
     s = sub.add_parser("render")
     s.add_argument("index")
     s.add_argument("--log")

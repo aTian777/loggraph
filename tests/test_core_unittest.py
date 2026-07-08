@@ -188,9 +188,12 @@ class LogGraphCoreTests(unittest.TestCase):
             )
 
             stdout = io.StringIO()
-            with redirect_stdout(stdout):
-                rc = cli_main(["init", str(root), "--out", str(out)])
+            stderr = io.StringIO()
+            from contextlib import redirect_stderr
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                rc = cli_main(["init", str(root), "--out", str(out), "--progress-jsonl"])
             self.assertEqual(rc, 0)
+            self.assertIn('"phase": "scan"', stderr.getvalue())
 
             stdout = io.StringIO()
             with redirect_stdout(stdout):
@@ -204,6 +207,41 @@ class LogGraphCoreTests(unittest.TestCase):
             self.assertIn("deliveryId", payload["event_profile_summary"]["session_keys"])
             self.assertIn("# LogGraph Findings", payload["report_markdown"])
             self.assertTrue(payload["runtime_findings"]["suggested_event_rules"])
+
+            profile_path = root / ".loggraph" / "profile.yaml"
+            profile_path.write_text(
+                "session_keys:\n"
+                "  - deliveryId\n"
+                "events:\n"
+                "  await_pcb:\n"
+                "    type: await_pcb\n"
+                "    patterns:\n"
+                "      - AwaitPcb\n"
+                "  pcb_result:\n"
+                "    type: pcb_result\n"
+                "    patterns:\n"
+                "      - callback received\n"
+                "expected_sequences:\n"
+                "  delivery_success:\n"
+                "    - await_pcb\n"
+                "    - pcb_result\n",
+                encoding="utf-8",
+            )
+            log_file.write_text("ERROR [app] pcb state=AwaitPcb deliveryId=abc timeout\n", encoding="utf-8")
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["analyze", str(root), "--log-file", str(log_file), "--index", str(out), "--all-lines"])
+            self.assertEqual(rc, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertTrue(payload["event_profile_summary"]["manual_profile"])
+            self.assertTrue(payload["runtime_findings"]["session_timelines"])
+            self.assertEqual(payload["runtime_findings"]["missing_events"][0]["missing"], ["pcb_result"])
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["profile", "suggest", str(root), "--index", str(out)])
+            self.assertEqual(rc, 0)
+            self.assertIn("session_keys:", stdout.getvalue())
 
     def test_cli_init_workers_and_no_incremental_options(self):
         with tempfile.TemporaryDirectory() as tmp:

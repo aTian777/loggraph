@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from loggraph.event_profile import build_event_profile
 from loggraph.models import CodeIndex
@@ -33,7 +34,7 @@ class Indexer:
         self.max_workers = max_workers
         self.incremental = incremental
 
-    def build(self, root: str | Path, existing_index: CodeIndex = None) -> CodeIndex:
+    def build(self, root: str | Path, existing_index: CodeIndex = None, progress: Callable[[dict], None] | None = None) -> CodeIndex:
         """Build code index with optional parallel processing and incremental updates."""
         root_path = Path(root).resolve()
         
@@ -45,6 +46,8 @@ class Indexer:
             index = CodeIndex(root=str(root_path), metadata={"languages": ["python", "kotlin", "java", "typescript", "go", "c", "cpp"]})
         
         # Collect files to parse.
+        if progress:
+            progress({"phase": "scan", "message": "Scanning source files"})
         discovered_files: set[str] = set()
         files_to_parse: list[Path] = []
         timestamps = index.metadata.setdefault("file_timestamps", {}) if self.incremental else {}
@@ -57,6 +60,9 @@ class Indexer:
                     continue  # File hasn't changed.
                 files_to_parse.append(path)
         
+        if progress:
+            progress({"phase": "scan_done", "total": len(discovered_files), "changed": len(files_to_parse), "message": "Source scan complete"})
+
         if self.incremental and existing_index:
             # Remove stale entries for deleted files and for changed files before re-parsing.
             stale_files = set(timestamps) - discovered_files
@@ -67,34 +73,54 @@ class Indexer:
         
         # Parse files in parallel if max_workers is set.
         if self.max_workers and len(files_to_parse) > 1:
-            self._parse_parallel(files_to_parse, root_path, index)
+            self._parse_parallel(files_to_parse, root_path, index, progress)
         else:
-            self._parse_sequential(files_to_parse, root_path, index)
+            self._parse_sequential(files_to_parse, root_path, index, progress)
         
         # Update file timestamps for incremental mode.
         if self.incremental:
             for path in files_to_parse:
                 timestamps[str(path)] = self._file_signature(path)
         
+        if progress:
+            progress({"phase": "resolve_calls", "message": "Resolving call edges"})
         self._resolve_call_edges(index)
+        if progress:
+            progress({"phase": "learn_profile", "message": "Learning event profile from log sites"})
         index.metadata["event_profile"] = build_event_profile(index)
+        if progress:
+            event_profile = index.metadata["event_profile"]
+            progress({
+                "phase": "done",
+                "functions": len(index.functions),
+                "calls": len(index.calls),
+                "log_sites": len(index.log_sites),
+                "learned_patterns": len(event_profile.get("learned_patterns", [])),
+                "message": "LogGraph index complete",
+            })
         return index
     
     def _file_signature(self, path: Path) -> str:
         stat = path.stat()
         return f"{stat.st_mtime_ns}:{stat.st_size}"
 
-    def _parse_sequential(self, files: list[Path], root_path: Path, index: CodeIndex) -> None:
+    def _parse_sequential(self, files: list[Path], root_path: Path, index: CodeIndex, progress: Callable[[dict], None] | None = None) -> None:
         """Parse files sequentially."""
-        for path in files:
+        total = len(files)
+        for current, path in enumerate(files, 1):
             self.parsers[path.suffix].parse_file(path, root_path, index)
+            if progress and (current == total or current == 1 or current % 50 == 0):
+                progress({"phase": "parse", "current": current, "total": total, "file": str(path), "message": "Parsing source files"})
     
-    def _parse_parallel(self, files: list[Path], root_path: Path, index: CodeIndex) -> None:
+    def _parse_parallel(self, files: list[Path], root_path: Path, index: CodeIndex, progress: Callable[[dict], None] | None = None) -> None:
         """Parse files in parallel using thread-local indexes, then merge results."""
+        total = len(files)
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = [executor.submit(self._parse_one, path, root_path) for path in files]
-            for future in as_completed(futures):
+            for current, future in enumerate(as_completed(futures), 1):
                 self._merge_index(index, future.result())
+                if progress and (current == total or current == 1 or current % 50 == 0):
+                    progress({"phase": "parse", "current": current, "total": total, "message": "Parsing source files"})
 
     def _parse_one(self, path: Path, root_path: Path) -> CodeIndex:
         partial = CodeIndex(root=str(root_path), metadata={})

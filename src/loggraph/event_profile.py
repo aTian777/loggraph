@@ -9,7 +9,7 @@ from loggraph.models import CodeIndex
 
 WORD_PATTERN = re.compile(r"[A-Za-z\u4e00-\u9fff][A-Za-z0-9_\u4e00-\u9fff-]{2,}")
 PLACEHOLDER_PATTERN = re.compile(r"%\w|\{[^}]*\}|\b\d+\b|0x[0-9a-f]+|[0-9a-f]{8,}", re.I)
-KEY_VALUE_PATTERN = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:Id|ID|_id|Key|No|SN|sn)?)\b\s*[=:]")
+KEY_VALUE_PATTERN = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:Id|ID|_id|Trace|trace|Request|request|Order|order|Task|task|Session|session|SN|sn))\b\s*[=:]")
 CAMEL_STATE_PATTERN = re.compile(r"\b(?:Await|Wait|Pending|Loading|Success|Failed|Fail|Error|Timeout|Retry)[A-Za-z0-9_]*\b")
 
 GENERIC_STOPWORDS = {
@@ -53,8 +53,11 @@ def build_event_profile(index: CodeIndex, *, min_token_count: int = 1, max_patte
         for state in CAMEL_STATE_PATTERN.findall(template):
             states[state] += 1
 
+    session_key_tokens = {key.lower() for key in session_keys}
     learned_patterns = []
     for token, count in token_counts.most_common(max_patterns):
+        if token in session_key_tokens:
+            continue
         if count < min_token_count and token_log_sites[token] < 2:
             continue
         learned_patterns.append({

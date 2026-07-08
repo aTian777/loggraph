@@ -10,6 +10,7 @@ from loggraph.events import extract_event, summarize_events
 from loggraph.graph.store import load_index
 from loggraph.logs.parser import parse_log_block
 from loggraph.matchers.locator import Locator
+from loggraph.profile import load_project_profile, merge_profiles
 
 APP_TAG_HINTS = ("smart-recyclable---->", "插桩检测-红包", "Log日志", "BaseViewModel")
 
@@ -22,12 +23,13 @@ def default_index_path(project_root: str | Path) -> Path:
     return default_cache_dir(project_root) / "index.json"
 
 
-def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, app_only: bool = True) -> dict:
+def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, app_only: bool = True, project: str | Path | None = None) -> dict:
     index = load_index(index_path)
     locator = Locator(index)
     path = Path(log_file)
     lines = path.read_text(errors="ignore").splitlines()
-    event_profile = index.metadata.get("event_profile", {})
+    project_root = Path(project) if project else Path(index.root or Path(index_path).parent.parent)
+    event_profile = merge_profiles(index.metadata.get("event_profile", {}), load_project_profile(project_root))
 
     matches = []
     events = []
@@ -67,17 +69,18 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
         "matches": matches,
         "event_profile_summary": {
             "source": event_profile.get("source", "none"),
+            "manual_profile": event_profile.get("manual_profile", False),
             "learned_patterns": len(event_profile.get("learned_patterns", [])),
             "session_keys": event_profile.get("session_keys", [])[:10],
             "states": event_profile.get("states", [])[:10],
         },
-        "runtime_findings": summarize_events(events),
+        "runtime_findings": summarize_events(events, profile=event_profile),
         "report_markdown": render_report(
             log_file=str(path),
             index_path=str(index_path),
             analyzed_lines=analyzed_lines,
             matches=matches,
-            runtime_findings=summarize_events(events),
+            runtime_findings=summarize_events(events, profile=event_profile),
             max_matches=top,
         ),
         "domain_findings": {
@@ -158,6 +161,21 @@ def render_report(*, log_file: str, index_path: str, analyzed_lines: int, matche
                 lines.append(f"   - {reason}")
     else:
         lines.append("- No source candidates matched. Consider running with `--all-lines` or refreshing the index.")
+
+    session_timelines = runtime_findings.get("session_timelines", [])
+    if session_timelines:
+        lines.extend(["", "## Session timelines"])
+        for session in session_timelines[:5]:
+            label = f"{session.get('session_key')}={session.get('session_id')}" if session.get("session_id") else "global"
+            lines.append(f"### {label}")
+            for event in session.get("events", [])[:8]:
+                lines.append(f"- line {event.get('line')}: {event.get('type')} — {event.get('message', '')}")
+    missing = runtime_findings.get("missing_events", [])
+    if missing:
+        lines.extend(["", "## Missing expected events"])
+        for item in missing[:10]:
+            session = item.get("session_id") or "global"
+            lines.append(f"- session `{session}` sequence `{item.get('sequence')}` missing: {', '.join(item.get('missing', []))}")
 
     lines.extend(["", "## Suggested next actions"])
     if source_rows:

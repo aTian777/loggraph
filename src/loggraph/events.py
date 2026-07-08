@@ -81,19 +81,79 @@ def extract_event(entry: LogEntry, line: int, profile: dict[str, Any] | None = N
     )
 
 
-def summarize_events(events: list[RuntimeEvent], *, limit: int = 20) -> dict[str, Any]:
+def summarize_events(events: list[RuntimeEvent], *, limit: int = 20, profile: dict[str, Any] | None = None) -> dict[str, Any]:
     counts = Counter(event.type for event in events)
     sessions = Counter(event.session_id for event in events if event.session_id)
     suspicious = [event.to_dict() for event in events if event.type in {"error", "exception", "timeout", "retry"}]
     timeline = [event.to_dict() for event in events[:limit]]
+    session_timelines = build_session_timelines(events, limit=limit, profile=profile)
     return {
         "event_count": len(events),
         "event_types": dict(counts),
         "sessions": dict(sessions.most_common(10)),
+        "session_timelines": session_timelines,
         "timeline": timeline,
         "suspicious_events": suspicious[:limit],
+        "missing_events": find_missing_events(session_timelines, profile or {}),
         "suggested_event_rules": suggest_event_rules(events),
     }
+
+
+def build_session_timelines(events: list[RuntimeEvent], *, limit: int = 20, profile: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    grouped: dict[str, list[RuntimeEvent]] = {}
+    for event in events:
+        key = event.session_id or "__global__"
+        grouped.setdefault(key, []).append(event)
+    timelines = []
+    for session_id, items in grouped.items():
+        if session_id == "__global__" and len(grouped) > 1:
+            continue
+        labels = [_event_label(event, profile or {}) for event in items]
+        timelines.append({
+            "session_id": "" if session_id == "__global__" else session_id,
+            "session_key": next((event.session_key for event in items if event.session_key), ""),
+            "event_count": len(items),
+            "event_types": dict(Counter(event.type for event in items)),
+            "labels": labels,
+            "events": [event.to_dict() for event in items[:limit]],
+        })
+    return sorted(timelines, key=lambda item: (-item["event_count"], item["session_id"]))[:limit]
+
+
+def find_missing_events(session_timelines: list[dict[str, Any]], profile: dict[str, Any]) -> list[dict[str, Any]]:
+    missing = []
+    for sequence_name, sequence in (profile.get("expected_sequences") or {}).items():
+        if not isinstance(sequence, list):
+            continue
+        expected = [str(item) for item in sequence]
+        for timeline in session_timelines:
+            observed = timeline.get("labels", [])
+            cursor = 0
+            absent = []
+            for item in expected:
+                try:
+                    pos = observed.index(item, cursor)
+                    cursor = pos + 1
+                except ValueError:
+                    absent.append(item)
+            if absent:
+                missing.append({
+                    "session_id": timeline.get("session_id", ""),
+                    "sequence": sequence_name,
+                    "missing": absent,
+                    "observed": observed,
+                })
+    return missing
+
+
+def _event_label(event: RuntimeEvent, profile: dict[str, Any]) -> str:
+    if not event.type.startswith("project:"):
+        return event.type
+    raw = event.type.split(":", 1)[1]
+    for name, spec in (profile.get("manual_events") or {}).items():
+        if raw == name or raw == str(spec.get("type", "")):
+            return name
+    return raw
 
 
 def suggest_event_rules(events: list[RuntimeEvent], *, limit: int = 8) -> list[dict[str, Any]]:

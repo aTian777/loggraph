@@ -1,6 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -128,6 +130,42 @@ async function runLogGraph(
   return result.stdout.trim();
 }
 
+async function runLogGraphWithProgress(
+  args: string[],
+  signal: AbortSignal | undefined,
+  onProgress: (text: string) => void,
+): Promise<string> {
+  if (!existsSync(LOGGRAPH_SHIM)) {
+    throw new Error(`LogGraph shim not found: ${LOGGRAPH_SHIM}`);
+  }
+  return await new Promise((resolvePromise, reject) => {
+    const child = spawn("node", [LOGGRAPH_SHIM, ...args], { cwd: LOGGRAPH_ROOT, env: process.env });
+    let stdout = "";
+    let stderr = "";
+    const abort = () => child.kill("SIGTERM");
+    signal?.addEventListener("abort", abort, { once: true });
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+    const rl = createInterface({ input: child.stderr });
+    rl.on("line", (line) => {
+      stderr += `${line}\n`;
+      try {
+        const event = JSON.parse(line) as { phase?: string; current?: number; total?: number; message?: string; learned_patterns?: number; log_sites?: number };
+        const count = event.current && event.total ? ` ${event.current}/${event.total}` : "";
+        const suffix = event.learned_patterns !== undefined ? ` (${event.learned_patterns} learned patterns, ${event.log_sites ?? 0} log sites)` : "";
+        onProgress(`LogGraph: ${event.message ?? event.phase ?? "working"}${count}${suffix}`);
+      } catch {
+        // Keep non-progress stderr for failure diagnostics.
+      }
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      signal?.removeEventListener("abort", abort);
+      if (code === 0) resolvePromise(stdout.trim());
+      else reject(new Error(`loggraph failed (${code})\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`));
+    });
+  });
+}
+
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "loggraph_init",
@@ -148,9 +186,11 @@ export default function (pi: ExtensionAPI) {
       const args = ["init", project];
       if (params.src) args.push("--src", normalizePath(ctx.cwd, params.src));
       if (params.out) args.push("--out", normalizePath(ctx.cwd, params.out));
-      onUpdate?.({ content: [{ type: "text", text: `LogGraph: scanning source files in ${project}...` }] });
-      onUpdate?.({ content: [{ type: "text", text: "LogGraph: extracting log sites and learning project event profile..." }] });
-      const stdout = await runLogGraph(pi, args, ctx.cwd, signal);
+      args.push("--progress-jsonl");
+      onUpdate?.({ content: [{ type: "text", text: `LogGraph: starting index for ${project}...` }] });
+      const stdout = await runLogGraphWithProgress(args, signal, (text) => {
+        onUpdate?.({ content: [{ type: "text", text }] });
+      });
       const summary = summarizeInitResult(stdout);
       onUpdate?.({ content: [{ type: "text", text: summary }] });
       return { content: [{ type: "text", text: stdout }], details: { stdout } };
