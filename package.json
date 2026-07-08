@@ -1,0 +1,26 @@
+{
+  "name": "@atian777/loggraph",
+  "version": "0.1.0",
+  "description": "LogGraph CLI and Pi extension for locating source code from logs.",
+  "keywords": ["pi-package", "pi-extension", "loggraph", "logs"],
+  "license": "MIT",
+  "bin": {
+    "loggraph": "./loggraph-shim.js"
+  },
+  "pi": {
+    "extensions": ["./extensions/loggraph"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "files": [
+    "extensions",
+    "fixtures",
+    "src",
+    "tests",
+    "pyproject.toml",
+    "README.md",
+    "loggraph-shim.js"
+  ]
+}

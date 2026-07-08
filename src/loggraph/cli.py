@@ -24,7 +24,17 @@ def cmd_init(args):
     out = Path(args.out) if args.out else default_index_path(args.project)
     out.parent.mkdir(parents=True, exist_ok=True)
     src = Path(args.src) if args.src else Path(args.project)
-    idx = Indexer().build(src)
+    
+    # Load existing index if incremental mode is enabled
+    existing_index = None
+    if not args.no_incremental and out.exists():
+        try:
+            existing_index = load_index(out)
+        except Exception:
+            pass  # If loading fails, start fresh
+    
+    indexer = Indexer(max_workers=args.workers, incremental=not args.no_incremental)
+    idx = indexer.build(src, existing_index=existing_index)
     save_index(idx, out)
     print(json.dumps({
         "project": str(Path(args.project).resolve()),
@@ -33,6 +43,8 @@ def cmd_init(args):
         "functions": len(idx.functions),
         "calls": len(idx.calls),
         "log_sites": len(idx.log_sites),
+        "incremental": not args.no_incremental,
+        "workers": args.workers or "sequential",
     }, ensure_ascii=False, indent=2))
 
 
@@ -102,6 +114,8 @@ def build_parser():
     s.add_argument("project")
     s.add_argument("--src", help="Source directory to index. Defaults to project root.")
     s.add_argument("--out", help="Cache path. Defaults to <project>/.loggraph/index.json.")
+    s.add_argument("--workers", type=int, help="Number of parallel workers for indexing. Default: sequential.")
+    s.add_argument("--no-incremental", action="store_true", help="Disable incremental indexing and rebuild from scratch.")
     s.set_defaults(func=cmd_init)
     s = sub.add_parser("query")
     s.add_argument("index")

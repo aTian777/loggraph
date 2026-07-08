@@ -149,15 +149,13 @@ class Locator:
         # Logger template matching.
         msg = entry.message or entry.raw
         msg_normalized = normalize_text(msg)
-        # Extract keywords from message for fast filtering - optimize by using set comprehension
+        # Extract keywords from message for fast filtering - optimize by using frozenset
         msg_lower = msg_normalized.lower()
-        msg_keywords = {word for word in msg_lower.split() if len(word) >= 4 and word.isalnum()}
+        msg_keywords = frozenset(word for word in msg_lower.split() if len(word) >= 4 and word.isalnum())
         # Cache entry level to avoid repeated lower() calls
         entry_level_lower = entry.level.lower() if entry.level else None
         # Cache entry logger to avoid repeated attribute access
         entry_logger = entry.logger
-        # Cache message length to avoid repeated len() calls
-        msg_len = len(msg)
         
         for lid, site_info in self._site_info.items():
             fn, compiled, site_kw, template_len, site = site_info
