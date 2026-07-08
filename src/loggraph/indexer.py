@@ -114,8 +114,15 @@ class Indexer:
         ]
 
     def _skip(self, path: Path) -> bool:
-        parts = set(path.parts)
-        return bool(parts & {".git", "__pycache__", ".venv", "venv", "node_modules", ".gradle", "build", "dist", ".idea", ".vscode"})
+        parts = {part.lower() for part in path.parts}
+        skip_dirs = {
+            ".git", "__pycache__", ".venv", "venv", "node_modules", ".gradle",
+            "build", "dist", ".idea", ".vscode", "third_party", "third-party",
+            "vendor", "external", "generated", "cmake-build-debug", "cmake-build-release",
+        }
+        if parts & skip_dirs:
+            return True
+        return any(part.startswith(("ncnn", "glslang", "spirv")) for part in parts)
 
     def _resolve_call_edges(self, index: CodeIndex) -> None:
         by_name: dict[str, list[str]] = {}

@@ -7,7 +7,8 @@ from pathlib import Path
 from loggraph.cli import main as cli_main
 from loggraph.indexer import Indexer
 from loggraph.logs.parser import parse_log_block, parse_log_text
-from loggraph.logs.templates import template_matches, similarity
+from loggraph.logs.templates import template_matches, similarity, template_to_regex
+from loggraph.models import LogSite
 from loggraph.matchers.locator import Locator
 from loggraph.evaluation.runner import evaluate
 from loggraph.graph.render import render_dot
@@ -68,6 +69,9 @@ class LogGraphCoreTests(unittest.TestCase):
             (root / "main.go").write_text('package main\nimport "log"\nfunc Run() { log.Println("Go hello") }\n', encoding="utf-8")
             (root / "native.c").write_text('int run_native() { printf("C hello %d", 1); return 0; }\n', encoding="utf-8")
             (root / "engine.cpp").write_text('void Engine::Start() { spdlog::info("C++ started {}"); }\n', encoding="utf-8")
+            (root / "generic.cpp").write_text('void Generic::Print() { printf("%d", 1); printf("%s%d", "x", 1); }\n', encoding="utf-8")
+            (root / "app" / "src" / "main" / "jni" / "ncnn-20240820" / "include").mkdir(parents=True)
+            (root / "app" / "src" / "main" / "jni" / "ncnn-20240820" / "include" / "Common.h").write_text('void Vendor::Print() { printf("Vendor hello %d", 1); }\n', encoding="utf-8")
             (root / "multiline.c").write_text('int multiline()\n{\n    printf("next-line brace");\n}\nprintf("global c log");\n', encoding="utf-8")
             (root / "widget.h").write_text('class Widget { public: void run() { std::cout << "header cpp log"; } };\n', encoding="utf-8")
 
@@ -77,6 +81,8 @@ class LogGraphCoreTests(unittest.TestCase):
             self.assertTrue(any(site.template == "Go hello" for site in idx.log_sites.values()))
             self.assertTrue(any(site.template == "C hello %d" for site in idx.log_sites.values()))
             self.assertTrue(any(site.template == "C++ started {}" for site in idx.log_sites.values()))
+            self.assertFalse(any(site.template in {"%d", "%s%d"} for site in idx.log_sites.values()))
+            self.assertFalse(any("ncnn-20240820" in site.file for site in idx.log_sites.values()))
             self.assertTrue(any(fn.name == "multiline" for fn in idx.functions.values()))
             next_line_site = next(site for site in idx.log_sites.values() if site.template == "next-line brace")
             self.assertIsNotNone(next_line_site.function_id)
@@ -109,6 +115,18 @@ class LogGraphCoreTests(unittest.TestCase):
             )
 
             idx = Indexer().build(root)
+            native_fid = next(fid for fid, fn in idx.functions.items() if fn.name == "run_native")
+            idx.log_sites["generic:c"] = LogSite(
+                id="generic:c",
+                function_id=native_fid,
+                level="info",
+                template="%d",
+                regex=template_to_regex("%d"),
+                file=str(root / "native.c"),
+                line=1,
+            )
+            self.assertFalse(Locator(idx).locate(parse_log_block("INFO 123"), top=3))
+
             c_cands = Locator(idx).locate(parse_log_block("INFO C hello 7"), top=3)
             self.assertTrue(c_cands)
             self.assertEqual(c_cands[0].function, "run_native")

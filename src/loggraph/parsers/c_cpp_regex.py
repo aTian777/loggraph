@@ -31,6 +31,8 @@ STD_STREAM_PATTERN = re.compile(r"\bstd::(?:cout|cerr|clog)\s*<<\s*[\"']([^\"']+
 SPDLOG_PATTERN = re.compile(r"\bspdlog::(trace|debug|info|warn|error|critical)\s*\(\s*[\"']([^\"']+)[\"']")
 LOGGER_PATTERN = re.compile(r"\b\w+(?:->|\.)(trace|debug|info|warn|warning|error|critical|fatal)\s*\(\s*[\"']([^\"']+)[\"']")
 GLOG_PATTERN = re.compile(r"\bLOG\s*\(\s*(INFO|WARNING|WARN|ERROR|FATAL|DEBUG)\s*\)\s*<<\s*[\"']([^\"']+)[\"']")
+FORMAT_TOKEN_PATTERN = re.compile(r"%(?:[-+ #0]*\d*(?:\.\d+)?[hljztL]*[diuoxXfFeEgGaAcspn%])|\{[^}]*\}")
+LITERAL_WORD_PATTERN = re.compile(r"[A-Za-z\u4e00-\u9fff]{3,}")
 
 
 class CppRegexParser(SourceParser):
@@ -86,6 +88,8 @@ class CppRegexParser(SourceParser):
             log_match = self._find_log(line)
             if log_match:
                 level, template = log_match
+                if self._is_generic_template(template):
+                    continue
                 lid = f"log:{language}:{module}:{current_function or 'unknown'}:{line_num}"
                 func_id = f"{language}:{module}:{current_function}" if current_function else None
                 index.log_sites[lid] = LogSite(
@@ -118,6 +122,10 @@ class CppRegexParser(SourceParser):
         if not any(ch in stripped for ch in "()"):
             return False
         return not re.match(r"^(if|for|while|switch|catch)\b", stripped)
+
+    def _is_generic_template(self, template: str) -> bool:
+        literal = FORMAT_TOKEN_PATTERN.sub(" ", template)
+        return not LITERAL_WORD_PATTERN.search(literal)
 
     def _find_log(self, line: str) -> tuple[str, str] | None:
         if m := SYSLOG_PATTERN.search(line):

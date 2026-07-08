@@ -6,6 +6,14 @@ from loggraph.models import CodeIndex, LogEntry, Candidate
 from loggraph.logs.templates import template_matches, similarity, normalize_text
 from loggraph.logs.traceback import filename_matches
 
+FORMAT_TOKEN_PATTERN = re.compile(r"%(?:[-+ #0]*\d*(?:\.\d+)?[hljztL]*[diuoxXfFeEgGaAcspn%])|\{[^}]*\}")
+LITERAL_WORD_PATTERN = re.compile(r"[A-Za-z\u4e00-\u9fff]{3,}")
+
+
+def is_generic_template(template: str) -> bool:
+    literal = FORMAT_TOKEN_PATTERN.sub(" ", template)
+    return not LITERAL_WORD_PATTERN.search(literal)
+
 
 class Locator:
     def __init__(self, index: CodeIndex):
@@ -35,6 +43,8 @@ class Locator:
                 compiled = None
             # Extract keywords from template (words >= 4 chars) - use pre-compiled pattern
             keywords = {w for w in keyword_pattern.findall(site.template.lower())}
+            if not keywords and is_generic_template(site.template):
+                continue
             self._site_keywords[lid] = keywords
             # Pre-map log site to its function
             fn = index.functions.get(site.function_id)
