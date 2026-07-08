@@ -267,48 +267,4 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("loggraph-init", {
-    description: "Initialize LogGraph cache: /loggraph-init [project] [src]",
-    handler: async (args, ctx) => {
-      const [projectArg, srcArg] = args.trim().split(/\s+/).filter(Boolean);
-      const project = projectArg ? normalizePath(ctx.cwd, projectArg) : ctx.cwd;
-      const cliArgs = ["init", project];
-      if (srcArg) cliArgs.push("--src", normalizePath(ctx.cwd, srcArg));
-      ctx.ui.notify(`Initializing LogGraph index for ${project}...`, "info");
-      try {
-        const stdout = await runLogGraph(pi, cliArgs, ctx.cwd, undefined);
-        ctx.ui.notify(summarizeInitResult(stdout), "info");
-      } catch (error) {
-        ctx.ui.notify(`LogGraph initialization failed.\n${errorMessage(error)}`, "error");
-      }
-    },
-  });
-
-  pi.registerCommand("loggraph-analyze", {
-    description: "Analyze log with cached LogGraph: /loggraph-analyze <log-file> or /loggraph-analyze <project> <log-file>",
-    handler: async (args, ctx) => {
-      const parsed = parseAnalyzeArgs(ctx.cwd, args);
-      if ("error" in parsed) {
-        ctx.ui.notify(parsed.error, "error");
-        return;
-      }
-      const { project, logFile } = parsed;
-      const index = projectIndexPath(project);
-      if (!existsSync(index)) {
-        ctx.ui.notify(`Missing index: ${index}. Run /loggraph-init first.`, "error");
-        return;
-      }
-      if (!isFile(logFile)) {
-        ctx.ui.notify(`Log file not found: ${logFile}`, "error");
-        return;
-      }
-      ctx.ui.notify(`Analyzing log with LogGraph: ${logFile}`, "info");
-      try {
-        const stdout = await runLogGraph(pi, ["analyze", project, "--log-file", logFile, "--index", index], ctx.cwd, undefined);
-        ctx.ui.notify(stdout, "info");
-      } catch (error) {
-        ctx.ui.notify(`LogGraph analysis failed.\n${errorMessage(error)}`, "error");
-      }
-    },
-  });
 }
