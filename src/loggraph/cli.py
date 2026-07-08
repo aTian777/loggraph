@@ -86,7 +86,7 @@ def cmd_analyze(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
     out = Path(args.out) if args.out else Path(args.project) / ".loggraph" / (Path(args.log_file).stem + ".analysis.json")
     out.parent.mkdir(parents=True, exist_ok=True)
-    report = analyze_log(index_path, args.log_file, top=args.top, app_only=not args.all_lines, project=args.project, context=args.context, source_context=args.source_context, detail=args.detail)
+    report = analyze_log(index_path, args.log_file, top=args.top, app_only=not args.all_lines, project=args.project, context=args.context, source_context=args.source_context, detail=args.detail, query=args.query or "")
     write_analysis(report, out)
     summary = compact_summary(report, max_matches=args.show_matches)
     summary["out"] = str(out)
@@ -163,7 +163,7 @@ def cmd_audit(args):
 
 def cmd_compare(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
-    report = compare_logs(index_path, args.baseline, args.target, project=args.project, top=args.top, app_only=not args.all_lines, context=args.context, detail=args.detail)
+    report = compare_logs(index_path, args.baseline, args.target, project=args.project, top=args.top, app_only=not args.all_lines, context=args.context, detail=args.detail, query=args.query or "")
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -248,6 +248,7 @@ def build_parser():
     s.add_argument("--context", type=int, default=0, help="Include N log lines before/after suspicious events and source matches.")
     s.add_argument("--source-context", type=int, default=3, help="Include N source lines around each candidate.")
     s.add_argument("--detail", choices=["brief", "normal", "full"], default="normal", help="Report detail level.")
+    s.add_argument("--query", help="Focus analysis on log entries matching these natural-language terms.")
     s.set_defaults(func=cmd_analyze)
     s = sub.add_parser("profile")
     profile_sub = s.add_subparsers(dest="profile_cmd", required=True)
@@ -302,6 +303,7 @@ def build_parser():
     s.add_argument("--format", choices=["json", "markdown"], default="markdown")
     s.add_argument("--out", help="Write JSON compare report to this path.")
     s.add_argument("--fail-on-regression", action="store_true", help="Exit with status 1 when regressions/hypotheses are detected.")
+    s.add_argument("--query", help="Focus comparison on log entries matching these natural-language terms.")
     s.set_defaults(func=cmd_compare)
     s = sub.add_parser("render")
     s.add_argument("index")
