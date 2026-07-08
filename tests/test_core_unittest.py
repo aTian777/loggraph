@@ -274,6 +274,24 @@ class LogGraphCoreTests(unittest.TestCase):
             self.assertIn("Target timed out before completing baseline path", stdout.getvalue())
             self.assertIn("pcb_result", stdout.getvalue())
 
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["audit", str(root), "--index", str(out)])
+            self.assertEqual(rc, 0)
+            self.assertIn("Logging Quality Audit", stdout.getvalue())
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["profile", "refine", str(root), "--log-file", str(target), "--index", str(out), "--all-lines"])
+            self.assertEqual(rc, 0)
+            self.assertIn("events:", stdout.getvalue())
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["profile", "sequence", str(root), "--from-log", str(baseline), "--name", "delivery_success", "--index", str(out), "--all-lines"])
+            self.assertEqual(rc, 0)
+            self.assertIn("delivery_success", stdout.getvalue())
+
     def test_cli_init_workers_and_no_incremental_options(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

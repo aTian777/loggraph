@@ -13,6 +13,7 @@ from loggraph.graph.render import render
 from loggraph.evaluation.runner import evaluate
 from loggraph.analyzer import analyze_log, compare_logs, compact_summary, default_index_path, write_analysis
 from loggraph.profile import default_profile_path, render_profile_suggestion
+from loggraph.quality import audit_index, refine_profile, render_audit_report, sequence_from_log
 
 
 def cmd_index(args):
@@ -117,6 +118,40 @@ def cmd_profile_init(args):
     print(json.dumps({"profile": str(profile_path), "written": True}, ensure_ascii=False, indent=2))
 
 
+def cmd_profile_refine(args):
+    index_path = Path(args.index) if args.index else default_index_path(args.project)
+    report = refine_profile(index_path, args.log_file, project=args.project, all_lines=args.all_lines)
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(report["patch_yaml"], encoding="utf-8")
+    if args.format == "yaml":
+        print(report["patch_yaml"], end="")
+    else:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+
+
+def cmd_profile_sequence(args):
+    index_path = Path(args.index) if args.index else default_index_path(args.project)
+    report = sequence_from_log(index_path, args.log_file, project=args.project, name=args.name, all_lines=args.all_lines)
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(report["yaml"], encoding="utf-8")
+    if args.format == "yaml":
+        print(report["yaml"], end="")
+    else:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+
+
+def cmd_audit(args):
+    index_path = Path(args.index) if args.index else default_index_path(args.project)
+    report = audit_index(index_path)
+    report["report_markdown"] = render_audit_report(report)
+    if args.format == "markdown":
+        print(report["report_markdown"])
+    else:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+
+
 def cmd_compare(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
     report = compare_logs(index_path, args.baseline, args.target, project=args.project, top=args.top, app_only=not args.all_lines, context=args.context)
@@ -202,6 +237,28 @@ def build_parser():
     pi.add_argument("--out", help="Profile path. Defaults to <project>/.loggraph/profile.yaml.")
     pi.add_argument("--force", action="store_true", help="Overwrite an existing profile.")
     pi.set_defaults(func=cmd_profile_init)
+    pr = profile_sub.add_parser("refine")
+    pr.add_argument("project")
+    pr.add_argument("--log-file", required=True)
+    pr.add_argument("--index", help="Index cache path. Defaults to <project>/.loggraph/index.json.")
+    pr.add_argument("--all-lines", action="store_true")
+    pr.add_argument("--format", choices=["json", "yaml"], default="yaml")
+    pr.add_argument("--out", help="Write suggested YAML patch to this path.")
+    pr.set_defaults(func=cmd_profile_refine)
+    pq = profile_sub.add_parser("sequence")
+    pq.add_argument("project")
+    pq.add_argument("--from-log", dest="log_file", required=True)
+    pq.add_argument("--name", default="success")
+    pq.add_argument("--index", help="Index cache path. Defaults to <project>/.loggraph/index.json.")
+    pq.add_argument("--all-lines", action="store_true")
+    pq.add_argument("--format", choices=["json", "yaml"], default="yaml")
+    pq.add_argument("--out", help="Write expected sequence YAML to this path.")
+    pq.set_defaults(func=cmd_profile_sequence)
+    s = sub.add_parser("audit")
+    s.add_argument("project")
+    s.add_argument("--index", help="Index cache path. Defaults to <project>/.loggraph/index.json.")
+    s.add_argument("--format", choices=["json", "markdown"], default="markdown")
+    s.set_defaults(func=cmd_audit)
     s = sub.add_parser("compare")
     s.add_argument("project")
     s.add_argument("--baseline", required=True, help="Successful/baseline log file.")

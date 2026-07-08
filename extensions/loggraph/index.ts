@@ -270,6 +270,9 @@ export default function (pi: ExtensionAPI) {
       const action = (parts[0] ?? "").toLowerCase();
       const initActions = new Set(["init", "index", "初始化", "索引"]);
       const analyzeActions = new Set(["analyze", "analyse", "log", "logs", "分析", "日志"]);
+      const compareActions = new Set(["compare", "diff", "对比", "比较"]);
+      const auditActions = new Set(["audit", "quality", "审计", "质量"]);
+      const profileActions = new Set(["profile", "配置", "画像"]);
 
       if (!trimmed || initActions.has(action)) {
         const rest = initActions.has(action) ? parts.slice(1) : parts;
@@ -284,6 +287,61 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify(summarizeInitResult(stdout), "info");
         } catch (error) {
           ctx.ui.notify(`LogGraph initialization failed.\n${errorMessage(error)}`, "error");
+        }
+        return;
+      }
+
+      if (compareActions.has(action)) {
+        const rest = parts.slice(1);
+        const first = resolveExistingFilePrefix(ctx.cwd, rest);
+        const second = first ? resolveExistingFilePrefix(ctx.cwd, rest.slice(first.used)) : undefined;
+        if (!first || !second) {
+          ctx.ui.notify("Usage: /loggraph compare <baseline-log> <target-log>", "error");
+          return;
+        }
+        try {
+          const stdout = await runLogGraph(pi, ["compare", ctx.cwd, "--baseline", first.file, "--target", second.file, "--all-lines"], ctx.cwd, undefined);
+          ctx.ui.notify(stdout, "info");
+        } catch (error) {
+          ctx.ui.notify(`LogGraph compare failed.\n${errorMessage(error)}`, "error");
+        }
+        return;
+      }
+
+      if (auditActions.has(action)) {
+        try {
+          const stdout = await runLogGraph(pi, ["audit", ctx.cwd], ctx.cwd, undefined);
+          ctx.ui.notify(stdout, "info");
+        } catch (error) {
+          ctx.ui.notify(`LogGraph audit failed.\n${errorMessage(error)}`, "error");
+        }
+        return;
+      }
+
+      if (profileActions.has(action)) {
+        const sub = (parts[1] ?? "suggest").toLowerCase();
+        const rest = parts.slice(2);
+        const cliArgs = ["profile", sub, ctx.cwd];
+        if (sub === "refine") {
+          const logFile = resolveExistingFilePrefix(ctx.cwd, rest);
+          if (!logFile) {
+            ctx.ui.notify("Usage: /loggraph profile refine <log-file>", "error");
+            return;
+          }
+          cliArgs.push("--log-file", logFile.file, "--all-lines");
+        } else if (sub === "sequence") {
+          const logFile = resolveExistingFilePrefix(ctx.cwd, rest);
+          if (!logFile) {
+            ctx.ui.notify("Usage: /loggraph profile sequence <success-log>", "error");
+            return;
+          }
+          cliArgs.push("--from-log", logFile.file, "--name", "success", "--all-lines");
+        }
+        try {
+          const stdout = await runLogGraph(pi, cliArgs, ctx.cwd, undefined);
+          ctx.ui.notify(stdout, "info");
+        } catch (error) {
+          ctx.ui.notify(`LogGraph profile command failed.\n${errorMessage(error)}`, "error");
         }
         return;
       }

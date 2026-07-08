@@ -67,11 +67,21 @@ loggraph compare . --baseline success.log --target failed.log --all-lines
 
 This highlights shared events, session-aligned differences, events missing from the failed target, extra target events, duration anomalies, rule-based hypotheses, and missing expected sequence items.
 
-### Initialize or suggest a project profile
+### Audit logging quality
+
+```bash
+loggraph audit .
+```
+
+This scores indexed source log sites for session keys, duration fields, state markers, error details, and generic templates. Use it to improve code logging before the next incident.
+
+### Initialize, refine, or suggest a project profile
 
 ```bash
 loggraph profile suggest .
 loggraph profile init .
+loggraph profile refine . --log-file failed.log --all-lines
+loggraph profile sequence . --from-log success.log --name delivery_success --all-lines
 ```
 
 Profiles live at `.loggraph/profile.yaml` and let each project define its own session keys, event patterns, and expected sequences:
@@ -94,6 +104,20 @@ expected_sequences:
   delivery_success:
     - await_pcb
     - pcb_result
+```
+
+### Pi slash command shortcuts
+
+Inside Pi, `/loggraph` supports common workflows:
+
+```text
+/loggraph init
+/loggraph app.log 为什么失败
+/loggraph compare success.log failed.log
+/loggraph audit
+/loggraph profile init
+/loggraph profile refine failed.log
+/loggraph profile sequence success.log
 ```
 
 ### Render a focused subgraph
