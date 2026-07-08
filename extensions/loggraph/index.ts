@@ -243,13 +243,20 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify(`Missing index: ${index}. Run /loggraph init first.`, "error");
           return;
         }
-        ctx.ui.notify(`Analyzing log with LogGraph: ${parsed.logFile}`, "info");
-        try {
-          const stdout = await runLogGraph(pi, ["analyze", parsed.project, "--log-file", parsed.logFile, "--index", index], ctx.cwd, undefined);
-          ctx.ui.notify(stdout, "info");
-        } catch (error) {
-          ctx.ui.notify(`LogGraph analysis failed.\n${errorMessage(error)}`, "error");
-        }
+        ctx.ui.notify(`Routing LogGraph analysis to the agent: ${parsed.logFile}`, "info");
+        pi.sendUserMessage([
+          {
+            type: "text",
+            text: [
+              "Use LogGraph to analyze this log file, then explain the result to the user.",
+              "Do not stop at raw candidate JSON: inspect the relevant candidate source files if needed and answer the user's question.",
+              `Project: ${parsed.project}`,
+              `Log file: ${parsed.logFile}`,
+              `Original request: ${trimmed}`,
+              "Start by calling the loggraph_analyze tool with the project and log file above.",
+            ].join("\n"),
+          },
+        ]);
         return;
       }
 
@@ -258,12 +265,18 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`No LogGraph index found at ${index}. Run /loggraph init first.`, "error");
         return;
       }
-      try {
-        const stdout = await runLogGraph(pi, ["query", index, "--log", trimmed, "--top", "3"], ctx.cwd, undefined);
-        ctx.ui.notify(stdout, "info");
-      } catch (error) {
-        ctx.ui.notify(`LogGraph query failed.\n${errorMessage(error)}`, "error");
-      }
+      ctx.ui.notify("Routing LogGraph query to the agent...", "info");
+      pi.sendUserMessage([
+        {
+          type: "text",
+          text: [
+            "Use LogGraph to investigate this log/error text, then explain the result to the user.",
+            "Do not stop at raw candidate JSON: call loggraph_query, inspect relevant source files if needed, and answer the user's question.",
+            `Index: ${index}`,
+            `Original request: ${trimmed}`,
+          ].join("\n"),
+        },
+      ]);
     },
   });
 
