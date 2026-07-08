@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -44,6 +44,64 @@ function summarizeInitResult(stdout: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function splitCommandArgs(args: string): string[] {
+  const matches = args.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+  return matches.map((part) => {
+    if ((part.startsWith('"') && part.endsWith('"')) || (part.startsWith("'") && part.endsWith("'"))) {
+      return part.slice(1, -1);
+    }
+    return part;
+  });
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function resolveExistingFilePrefix(cwd: string, parts: string[]): { file: string; used: number } | undefined {
+  for (let end = parts.length; end >= 1; end--) {
+    const candidate = normalizePath(cwd, parts.slice(0, end).join(" "));
+    if (isFile(candidate)) return { file: candidate, used: end };
+  }
+  return undefined;
+}
+
+function parseAnalyzeArgs(cwd: string, args: string): { project: string; logFile: string } | { error: string } {
+  const parts = splitCommandArgs(args.trim());
+  if (parts.length === 0) {
+    return { error: "Usage: /loggraph-analyze <log-file> or /loggraph-analyze <project> <log-file>" };
+  }
+
+  const entireArgAsFile = normalizePath(cwd, args.trim());
+  if (isFile(entireArgAsFile)) {
+    return { project: cwd, logFile: entireArgAsFile };
+  }
+
+  const projectCandidate = normalizePath(cwd, parts[0]);
+  if (parts.length >= 2 && isDirectory(projectCandidate)) {
+    const logFilePrefix = resolveExistingFilePrefix(cwd, parts.slice(1));
+    return {
+      project: projectCandidate,
+      logFile: logFilePrefix?.file ?? normalizePath(cwd, parts[1]),
+    };
+  }
+
+  const logFilePrefix = resolveExistingFilePrefix(cwd, parts);
+  return { project: cwd, logFile: logFilePrefix?.file ?? normalizePath(cwd, parts[0]) };
 }
 
 async function runLogGraph(
@@ -172,17 +230,19 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("loggraph-analyze", {
     description: "Analyze log with cached LogGraph: /loggraph-analyze <log-file> or /loggraph-analyze <project> <log-file>",
     handler: async (args, ctx) => {
-      const parts = args.trim().split(/\s+/).filter(Boolean);
-      if (parts.length === 0) {
-        ctx.ui.notify("Usage: /loggraph-analyze <log-file> or /loggraph-analyze <project> <log-file>", "error");
+      const parsed = parseAnalyzeArgs(ctx.cwd, args);
+      if ("error" in parsed) {
+        ctx.ui.notify(parsed.error, "error");
         return;
       }
-      const [projectArg, logFileArg] = parts.length === 1 ? [undefined, parts[0]] : [parts[0], parts[1]];
-      const project = projectArg ? normalizePath(ctx.cwd, projectArg) : ctx.cwd;
-      const logFile = normalizePath(ctx.cwd, logFileArg);
+      const { project, logFile } = parsed;
       const index = projectIndexPath(project);
       if (!existsSync(index)) {
         ctx.ui.notify(`Missing index: ${index}. Run /loggraph-init first.`, "error");
+        return;
+      }
+      if (!isFile(logFile)) {
+        ctx.ui.notify(`Log file not found: ${logFile}`, "error");
         return;
       }
       ctx.ui.notify(`Analyzing log with LogGraph: ${logFile}`, "info");
