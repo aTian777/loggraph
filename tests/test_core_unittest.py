@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from loggraph.analyzer import query_terms
 from loggraph.cli import main as cli_main
 from loggraph.indexer import Indexer
 from loggraph.logs.parser import parse_log_block, parse_log_text
@@ -74,8 +75,8 @@ class LogGraphCoreTests(unittest.TestCase):
             (root / "native.c").write_text('int run_native() { printf("C hello %d", 1); return 0; }\n', encoding="utf-8")
             (root / "engine.cpp").write_text('void Engine::Start() { spdlog::info("C++ started {}"); }\n', encoding="utf-8")
             (root / "generic.cpp").write_text('void Generic::Print() { printf("%d", 1); printf("%s%d", "x", 1); }\n', encoding="utf-8")
-            (root / "app" / "src" / "main" / "jni" / "ncnn-20240820" / "include").mkdir(parents=True)
-            (root / "app" / "src" / "main" / "jni" / "ncnn-20240820" / "include" / "Common.h").write_text('void Vendor::Print() { printf("Vendor hello %d", 1); }\n', encoding="utf-8")
+            (root / "app" / "src" / "main" / "jni" / "third_party" / "include").mkdir(parents=True)
+            (root / "app" / "src" / "main" / "jni" / "third_party" / "include" / "Common.h").write_text('void Vendor::Print() { printf("Vendor hello %d", 1); }\n', encoding="utf-8")
             (root / "multiline.c").write_text('int multiline()\n{\n    printf("next-line brace");\n}\nprintf("global c log");\n', encoding="utf-8")
             (root / "widget.h").write_text('class Widget { public: void run() { std::cout << "header cpp log"; } };\n', encoding="utf-8")
 
@@ -86,7 +87,7 @@ class LogGraphCoreTests(unittest.TestCase):
             self.assertTrue(any(site.template == "C hello %d" for site in idx.log_sites.values()))
             self.assertTrue(any(site.template == "C++ started {}" for site in idx.log_sites.values()))
             self.assertFalse(any(site.template in {"%d", "%s%d"} for site in idx.log_sites.values()))
-            self.assertFalse(any("ncnn-20240820" in site.file for site in idx.log_sites.values()))
+            self.assertFalse(any("third_party" in site.file for site in idx.log_sites.values()))
             self.assertTrue(any(fn.name == "multiline" for fn in idx.functions.values()))
             next_line_site = next(site for site in idx.log_sites.values() if site.template == "next-line brace")
             self.assertIsNotNone(next_line_site.function_id)
@@ -310,6 +311,17 @@ class LogGraphCoreTests(unittest.TestCase):
             with redirect_stdout(stdout):
                 rc = cli_main(["compare", str(root), "--baseline", str(baseline), "--target", str(target), "--index", str(out), "--all-lines", "--fail-on-regression"])
             self.assertEqual(rc, 1)
+
+    def test_query_terms_are_profile_driven(self):
+        self.assertEqual(query_terms("pcb await"), ["await", "pcb"])
+        profile = {
+            "entities": {"pcb": {"aliases": ["主控", "称重"]}},
+            "manual_events": {"await_pcb": {"patterns": ["waiting_pcb_version"]}},
+        }
+        terms = query_terms("pcb await_pcb", profile)
+        self.assertIn("pcb", terms)
+        self.assertIn("主控", terms)
+        self.assertIn("waiting_pcb_version", terms)
 
     def test_cli_init_workers_and_no_incremental_options(self):
         with tempfile.TemporaryDirectory() as tmp:

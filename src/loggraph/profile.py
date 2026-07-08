@@ -39,6 +39,7 @@ def merge_profiles(learned: dict[str, Any] | None, manual: dict[str, Any] | None
     merged["learned_patterns"] = manual_patterns + learned_patterns
     merged["session_keys"] = _unique((manual.get("session_keys") or []) + (learned.get("session_keys") or []))
     merged["states"] = _unique((manual.get("states") or []) + (learned.get("states") or []))
+    merged["app_identifiers"] = _unique((manual.get("app_identifiers") or []) + (learned.get("app_identifiers") or []))
     merged["expected_sequences"] = manual.get("expected_sequences") or {}
     merged["entities"] = manual.get("entities") or {}
     merged["manual_events"] = manual.get("events") or {}
@@ -47,7 +48,10 @@ def merge_profiles(learned: dict[str, Any] | None, manual: dict[str, Any] | None
 
 
 def render_profile_suggestion(profile: dict[str, Any]) -> str:
-    lines = ["# .loggraph/profile.yaml suggestion", "", "session_keys:"]
+    lines = ["# .loggraph/profile.yaml suggestion", "", "app_identifiers:"]
+    for item in profile.get("app_identifiers", [])[:20]:
+        lines.append(f"  - {item}")
+    lines.extend(["", "session_keys:"]) 
     for key in profile.get("session_keys", [])[:20]:
         lines.append(f"  - {key}")
     lines.extend(["", "states:"])
@@ -70,6 +74,7 @@ def render_profile_suggestion(profile: dict[str, Any]) -> str:
 
 def merge_manual_profiles(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base or {})
+    merged["app_identifiers"] = _unique((base or {}).get("app_identifiers", []) + (patch or {}).get("app_identifiers", []))
     merged["session_keys"] = _unique((base or {}).get("session_keys", []) + (patch or {}).get("session_keys", []))
     merged["states"] = _unique((base or {}).get("states", []) + (patch or {}).get("states", []))
     events = dict((base or {}).get("events") or {})
@@ -82,7 +87,10 @@ def merge_manual_profiles(base: dict[str, Any], patch: dict[str, Any]) -> dict[s
 
 
 def render_manual_profile(profile: dict[str, Any]) -> str:
-    lines = ["session_keys:"]
+    lines = ["app_identifiers:"]
+    for item in profile.get("app_identifiers", []):
+        lines.append(f"  - {item}")
+    lines.extend(["", "session_keys:"])
     for key in profile.get("session_keys", []):
         lines.append(f"  - {key}")
     lines.extend(["", "states:"])

@@ -4,7 +4,6 @@ import json
 import re
 from dataclasses import asdict
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 
 from loggraph.events import extract_event, summarize_events
 from loggraph.graph.store import load_index
@@ -12,7 +11,6 @@ from loggraph.logs.parser import parse_log_block
 from loggraph.matchers.locator import Locator
 from loggraph.profile import load_project_profile, merge_profiles
 
-APP_TAG_HINTS = ("smart-recyclable---->", "插桩检测-红包", "Log日志", "BaseViewModel", "com.hlkj.rvm")
 LOGCAT_HEADER_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3}\s+\d+-\d+\s+\S+\s+(?P<package>\S+)\s+[VDIWEF]\b")
 LOGCAT_CONTINUATION_PATTERN = re.compile(r"^\s*[│|]\s?(?P<msg>.*)$")
 
@@ -33,11 +31,12 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
     project_root = Path(project) if project else Path(index.root or Path(index_path).parent.parent)
     event_profile = merge_profiles(index.metadata.get("event_profile", {}), load_project_profile(project_root))
 
-    query_tokens = query_terms(query)
+    query_tokens = query_terms(query, event_profile)
     matches = []
     events = []
     analyzed_lines = 0
-    for no, raw in iter_logical_log_entries(lines, app_only=app_only):
+    app_identifiers = [str(item) for item in event_profile.get("app_identifiers", [])]
+    for no, raw in iter_logical_log_entries(lines, app_only=app_only, app_identifiers=app_identifiers):
         if query_tokens and not text_matches_query(raw, query_tokens):
             continue
         analyzed_lines += 1
@@ -54,13 +53,6 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
             if context > 0:
                 item["context"] = context_window(lines, no, context)
             matches.append(item)
-
-    delivery_posts = extract_delivery_posts(lines)
-    completed_rounds = [
-        {"line": no, "time": line[:18], "log": line}
-        for no, line in enumerate(lines, 1)
-        if "一轮投递流程结束" in line
-    ]
 
     runtime_findings = summarize_events(events, profile=event_profile)
     runtime_findings["hypotheses"] = generate_hypotheses(runtime_findings)
@@ -96,16 +88,13 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
             max_matches=top,
             detail=detail,
         ),
-        "domain_findings": {
-            "delivery_posts": delivery_posts,
-            "completed_rounds": completed_rounds,
-            "bottle_count_from_rty_sum": sum(item["rty"] for item in delivery_posts),
-        },
+        "domain_findings": {}, 
     }
 
 
-def iter_logical_log_entries(lines: list[str], *, app_only: bool) -> list[tuple[int, str]]:
+def iter_logical_log_entries(lines: list[str], *, app_only: bool, app_identifiers: list[str] | None = None) -> list[tuple[int, str]]:
     entries: list[tuple[int, str]] = []
+    app_identifiers = app_identifiers or []
     current_no = 0
     current_lines: list[str] = []
     current_is_app = False
@@ -122,36 +111,19 @@ def iter_logical_log_entries(lines: list[str], *, app_only: bool) -> list[tuple[
             current_no = no
             current_lines = [line]
             package_name = header_match.group("package") if header_match else ""
-            current_is_app = package_name == "com.hlkj.rvm" or any(hint != "com.hlkj.rvm" and hint in line for hint in APP_TAG_HINTS)
+            current_is_app = not app_identifiers or package_name in app_identifiers or any(identifier in line for identifier in app_identifiers)
             continue
         if current_lines:
             current_lines.append(line)
             continue
-        if not app_only or any(hint in line for hint in APP_TAG_HINTS):
+        if not app_only:
+            entries.append((no, line))
+        elif app_identifiers and any(identifier in line for identifier in app_identifiers):
+            entries.append((no, line))
+        elif not app_identifiers:
             entries.append((no, line))
     flush()
     return entries
-
-
-def extract_delivery_posts(lines: list[str]) -> list[dict]:
-    posts = []
-    for no, line in enumerate(lines, 1):
-        if "/mqtt/hyfr-rp?" not in line or "--> POST " not in line:
-            continue
-        url = line.split("--> POST ", 1)[1].split(" http/", 1)[0]
-        query = parse_qs(urlparse(url).query)
-        posts.append({
-            "line": no,
-            "time": line[:18],
-            "rty": _to_int(query.get("rty", ["0"])[0]),
-            "c": query.get("c", [""])[0],
-            "wg": _to_int(query.get("wg", ["0"])[0]),
-            "th": query.get("th", [""])[0],
-            "ty": query.get("ty", [""])[0],
-            "sn": query.get("sn", [""])[0],
-            "url": url,
-        })
-    return posts
 
 
 def write_analysis(report: dict, out: str | Path) -> None:
@@ -531,27 +503,36 @@ def generate_compare_hypotheses(session_comparisons: list[dict], duration_anomal
     return hypotheses
 
 
-def query_terms(query: str) -> list[str]:
+def query_terms(query: str, profile: dict | None = None) -> list[str]:
     if not query:
         return []
     terms = re.findall(r"[A-Za-z0-9_\u4e00-\u9fff]{2,}", query.lower())
-    expanded = []
+    expanded = list(terms)
     for term in terms:
-        expanded.append(term)
-        if term == "pcb":
-            expanded.extend(["主控", "称重", "皮带", "ota_pcb"])
-        if term in {"await", "等待"}:
-            expanded.extend(["await", "waiting", "等待"])
+        expanded.extend(profile_query_aliases(term, profile or {}))
     return sorted(set(expanded))
+
+
+def profile_query_aliases(term: str, profile: dict) -> list[str]:
+    aliases = []
+    entities = profile.get("entities") or {}
+    for name, spec in entities.items():
+        values = [str(name).lower()]
+        if isinstance(spec, dict):
+            values.extend(str(alias).lower() for alias in spec.get("aliases", []))
+        if term in values:
+            aliases.extend(values)
+    events = profile.get("manual_events") or {}
+    for name, spec in events.items():
+        values = [str(name).lower()]
+        if isinstance(spec, dict):
+            values.extend(str(pattern).lower() for pattern in spec.get("patterns", []))
+        if term in values:
+            aliases.extend(values)
+    return aliases
 
 
 def text_matches_query(text: str, terms: list[str]) -> bool:
     hay = text.lower()
     return any(term.lower() in hay for term in terms)
 
-
-def _to_int(value: str) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0

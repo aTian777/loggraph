@@ -214,7 +214,7 @@ export default function (pi: ExtensionAPI) {
       top: Type.Optional(Type.Number({ description: "Top candidates per log line.", default: 3 })),
       showMatches: Type.Optional(Type.Number({ description: "How many matched lines to show in the compact result.", default: 10 })),
       allLines: Type.Optional(Type.Boolean({ description: "Analyze all log lines instead of app-tag lines only.", default: false })),
-      query: Type.Optional(Type.String({ description: "Natural-language focus query, e.g. 'pcb await'. Filters analysis to related log entries." })),
+      query: Type.Optional(Type.String({ description: "Natural-language focus query, e.g. 'checkout timeout' or 'upload failed'. Filters analysis to related log entries." })),
       context: Type.Optional(Type.Number({ description: "Include N log lines before/after suspicious events and source matches.", default: 3 })),
       sourceContext: Type.Optional(Type.Number({ description: "Include N source lines around each candidate.", default: 3 })),
       detail: Type.Optional(Type.Union([Type.Literal("brief"), Type.Literal("normal"), Type.Literal("full")], { description: "Report detail level. Defaults to normal." })),
@@ -379,7 +379,7 @@ export default function (pi: ExtensionAPI) {
               `Project: ${parsed.project}`,
               `Log file: ${parsed.logFile}`,
               `Original request: ${trimmed}`,
-              "Start by calling the loggraph_analyze tool with the project and log file above. Pass the user's question as the query parameter when it contains focus terms such as pcb/await/state/timeout.",
+              "Start by calling the loggraph_analyze tool with the project and log file above. Pass the user's question as the query parameter when it contains focus terms such as state, timeout, failed, upload, or domain words from the project profile.",
             ].join("\n"),
           },
         ]);

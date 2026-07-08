@@ -152,9 +152,7 @@ class Indexer:
             "build", "dist", ".idea", ".vscode", "third_party", "third-party",
             "vendor", "external", "generated", "cmake-build-debug", "cmake-build-release",
         }
-        if parts & skip_dirs:
-            return True
-        return any(part.startswith(("ncnn", "glslang", "spirv")) for part in parts)
+        return bool(parts & skip_dirs)
 
     def _resolve_call_edges(self, index: CodeIndex) -> None:
         by_name: dict[str, list[str]] = {}
