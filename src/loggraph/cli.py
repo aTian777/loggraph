@@ -36,6 +36,7 @@ def cmd_init(args):
     indexer = Indexer(max_workers=args.workers, incremental=not args.no_incremental)
     idx = indexer.build(src, existing_index=existing_index)
     save_index(idx, out)
+    event_profile = idx.metadata.get("event_profile", {})
     print(json.dumps({
         "project": str(Path(args.project).resolve()),
         "src": str(src.resolve()),
@@ -43,6 +44,11 @@ def cmd_init(args):
         "functions": len(idx.functions),
         "calls": len(idx.calls),
         "log_sites": len(idx.log_sites),
+        "event_profile": {
+            "learned_patterns": len(event_profile.get("learned_patterns", [])),
+            "session_keys": len(event_profile.get("session_keys", [])),
+            "states": len(event_profile.get("states", [])),
+        },
         "incremental": not args.no_incremental,
         "workers": args.workers or "sequential",
     }, ensure_ascii=False, indent=2))
@@ -76,7 +82,10 @@ def cmd_analyze(args):
     write_analysis(report, out)
     summary = compact_summary(report, max_matches=args.show_matches)
     summary["out"] = str(out)
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if args.format == "markdown":
+        print(summary.get("report_markdown", ""))
+    else:
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
 def cmd_render(args):
@@ -135,6 +144,7 @@ def build_parser():
     s.add_argument("--top", type=int, default=3)
     s.add_argument("--show-matches", type=int, default=10)
     s.add_argument("--all-lines", action="store_true", help="Analyze all log lines instead of app-tag lines only.")
+    s.add_argument("--format", choices=["json", "markdown"], default="json", help="Output compact JSON or a human-readable markdown report.")
     s.set_defaults(func=cmd_analyze)
     s = sub.add_parser("render")
     s.add_argument("index")

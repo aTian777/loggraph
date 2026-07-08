@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from loggraph.event_profile import build_event_profile
 from loggraph.models import CodeIndex
 from loggraph.parsers.python_ast import PythonAstParser
 from loggraph.parsers.kotlin_regex import KotlinRegexParser
@@ -51,8 +52,8 @@ class Indexer:
             if path.is_file() and path.suffix in self.parsers and not self._skip(path):
                 file_key = str(path)
                 discovered_files.add(file_key)
-                current_mtime = path.stat().st_mtime
-                if self.incremental and existing_index and timestamps.get(file_key) == current_mtime:
+                current_signature = self._file_signature(path)
+                if self.incremental and existing_index and timestamps.get(file_key) == current_signature:
                     continue  # File hasn't changed.
                 files_to_parse.append(path)
         
@@ -73,11 +74,16 @@ class Indexer:
         # Update file timestamps for incremental mode.
         if self.incremental:
             for path in files_to_parse:
-                timestamps[str(path)] = path.stat().st_mtime
+                timestamps[str(path)] = self._file_signature(path)
         
         self._resolve_call_edges(index)
+        index.metadata["event_profile"] = build_event_profile(index)
         return index
     
+    def _file_signature(self, path: Path) -> str:
+        stat = path.stat()
+        return f"{stat.st_mtime_ns}:{stat.st_size}"
+
     def _parse_sequential(self, files: list[Path], root_path: Path, index: CodeIndex) -> None:
         """Parse files sequentially."""
         for path in files:

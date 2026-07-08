@@ -26,6 +26,7 @@ function summarizeInitResult(stdout: string): string {
       functions?: number;
       calls?: number;
       log_sites?: number;
+      event_profile?: { learned_patterns?: number; session_keys?: number; states?: number };
       incremental?: boolean;
       workers?: number | string;
     };
@@ -35,6 +36,7 @@ function summarizeInitResult(stdout: string): string {
       `Source: ${payload.src ?? "unknown"}`,
       `Index: ${payload.cache ?? "unknown"}`,
       `Functions: ${payload.functions ?? 0}, Calls: ${payload.calls ?? 0}, Log sites: ${payload.log_sites ?? 0}`,
+      `Event profile: ${payload.event_profile?.learned_patterns ?? 0} patterns, ${payload.event_profile?.session_keys ?? 0} session keys, ${payload.event_profile?.states ?? 0} states`,
       `Incremental: ${payload.incremental ?? "unknown"}, Workers: ${payload.workers ?? "sequential"}`,
     ].join("\n");
   } catch {
@@ -141,12 +143,16 @@ export default function (pi: ExtensionAPI) {
       src: Type.Optional(Type.String({ description: "Source directory to index. Defaults to project root." })),
       out: Type.Optional(Type.String({ description: "Index output path. Defaults to <project>/.loggraph/index.json." })),
     }),
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, signal, onUpdate, ctx) {
       const project = params.project ? normalizePath(ctx.cwd, params.project) : ctx.cwd;
       const args = ["init", project];
       if (params.src) args.push("--src", normalizePath(ctx.cwd, params.src));
       if (params.out) args.push("--out", normalizePath(ctx.cwd, params.out));
+      onUpdate?.({ content: [{ type: "text", text: `LogGraph: scanning source files in ${project}...` }] });
+      onUpdate?.({ content: [{ type: "text", text: "LogGraph: extracting log sites and learning project event profile..." }] });
       const stdout = await runLogGraph(pi, args, ctx.cwd, signal);
+      const summary = summarizeInitResult(stdout);
+      onUpdate?.({ content: [{ type: "text", text: summary }] });
       return { content: [{ type: "text", text: stdout }], details: { stdout } };
     },
   });
@@ -226,6 +232,7 @@ export default function (pi: ExtensionAPI) {
         const cliArgs = ["init", project];
         if (srcArg) cliArgs.push("--src", normalizePath(ctx.cwd, srcArg));
         ctx.ui.notify(`Initializing LogGraph index for ${project}...`, "info");
+        ctx.ui.notify("LogGraph: scanning source files, extracting log sites, and learning event profile...", "info");
         try {
           const stdout = await runLogGraph(pi, cliArgs, ctx.cwd, undefined);
           ctx.ui.notify(summarizeInitResult(stdout), "info");

@@ -137,6 +137,74 @@ class LogGraphCoreTests(unittest.TestCase):
             self.assertEqual(cpp_cands[0].function, "Engine::Start")
             self.assertTrue(cpp_cands[0].file.endswith("engine.cpp"))
 
+    def test_incremental_updates_added_and_deleted_log_sites(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "app.py"
+            source.write_text(
+                "import logging\n"
+                "log = logging.getLogger(__name__)\n"
+                "\n"
+                "def run():\n"
+                "    log.info('first log')\n",
+                encoding="utf-8",
+            )
+
+            idx = Indexer(incremental=True).build(root)
+            self.assertTrue(any(site.template == "first log" for site in idx.log_sites.values()))
+
+            source.write_text(
+                "import logging\n"
+                "log = logging.getLogger(__name__)\n"
+                "\n"
+                "def run():\n"
+                "    log.info('second log')\n",
+                encoding="utf-8",
+            )
+            idx = Indexer(incremental=True).build(root, existing_index=idx)
+            self.assertFalse(any(site.template == "first log" for site in idx.log_sites.values()))
+            self.assertTrue(any(site.template == "second log" for site in idx.log_sites.values()))
+
+    def test_cli_analyze_extracts_runtime_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = root / ".loggraph" / "index.json"
+            log_file = root / "app.log"
+            (root / "app.py").write_text(
+                "import logging\n"
+                "log = logging.getLogger(__name__)\n"
+                "\n"
+                "def await_pcb():\n"
+                "    log.error('pcb state=AwaitPcb deliveryId=%s timeout')\n"
+                "\n"
+                "def pcb_callback():\n"
+                "    log.info('pcb callback received deliveryId=%s')\n",
+                encoding="utf-8",
+            )
+            log_file.write_text(
+                "ERROR [app] pcb state=AwaitPcb deliveryId=abc timeout\n"
+                "INFO [app] pcb callback received deliveryId=abc\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["init", str(root), "--out", str(out)])
+            self.assertEqual(rc, 0)
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["analyze", str(root), "--log-file", str(log_file), "--index", str(out), "--all-lines"])
+            self.assertEqual(rc, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertGreaterEqual(payload["runtime_findings"]["event_count"], 1)
+            self.assertIn("timeout", payload["runtime_findings"]["event_types"])
+            self.assertIn("project:pcb", payload["runtime_findings"]["event_types"])
+            self.assertGreater(payload["event_profile_summary"]["learned_patterns"], 0)
+            self.assertIn("deliveryId", payload["event_profile_summary"]["session_keys"])
+            self.assertIn("# LogGraph Findings", payload["report_markdown"])
+            self.assertTrue(payload["runtime_findings"]["suggested_event_rules"])
+
     def test_cli_init_workers_and_no_incremental_options(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
