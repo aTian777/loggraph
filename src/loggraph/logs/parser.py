@@ -9,6 +9,10 @@ LEVELS = r"DEBUG|INFO|WARNING|WARN|ERROR|EXCEPTION|CRITICAL|FATAL"
 
 # Pre-compile regex patterns for performance
 _PATTERNS = [
+    # Android logcat: 07-08 10:12:01.123 1234 5678 I Tag: message
+    re.compile(r"(?P<ts>\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(?P<pid>\d+)\s+(?P<tid>\d+)\s+(?P<level>[VDIWEF])\s+(?P<logger>[^:]+):\s*(?P<msg>.*)"),
+    # Legacy Android logcat: I/Tag( 1234): message
+    re.compile(r"(?P<level>[VDIWEF])/(?P<logger>[^\(]+)\(\s*(?P<pid>\d+)\):\s*(?P<msg>.*)"),
     # Log4j format: 2024-01-15 10:30:45,123 INFO [thread] logger - message
     re.compile(rf"(?P<ts>\d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}:\d{{2}},\d{{3}})\s+(?P<level>{LEVELS})\s+\[(?P<thread>[^\]]+)\]\s+(?P<logger>[\w.$:-]+)\s*-\s*(?P<msg>.*)", re.I),
     # Logback format: 2024-01-15 10:30:45.123 [thread] LEVEL logger - message
@@ -24,7 +28,7 @@ _PATTERNS = [
     # Key-value format: timestamp=... level=... message=...
     re.compile(rf"(?:timestamp|time)=(?P<ts>[^\s]+)\s+.*?(?:level)=(?P<level>\S+)\s+.*?(?:message|msg)=(?P<msg>.+?)(?:\s+\w+=|$)", re.I),
 ]
-_SPLIT_PATTERN = re.compile(rf"(\d{{4}}-\d{{2}}-\d{{2}}|{LEVELS}\b|\{{|[A-Z][a-z]{{2}}\s+\d{{1,2}}|(?:timestamp|time)=)", re.I)
+_SPLIT_PATTERN = re.compile(rf"(\d{{2}}-\d{{2}}\s+\d{{2}}:\d{{2}}:\d{{2}}\.\d{{3}}|[VDIWEF]/|\d{{4}}-\d{{2}}-\d{{2}}|{LEVELS}\b|\{{|[A-Z][a-z]{{2}}\s+\d{{1,2}}|(?:timestamp|time)=)", re.I)
 _JAVA_EXCEPTION = re.compile(r"^[\w.]+(?:Error|Exception|Throwable)(?:\s*:.*)?$")
 _JAVA_STACK_FRAME = re.compile(r"^\s+at\s+[\w.$]+\([\w.]+:\d+\)$")
 
@@ -93,12 +97,16 @@ def _parse_plain(line: str) -> LogEntry | None:
                     timestamp=gd.get("ts") or "",
                     logger=gd.get("program") or "",
                 )
+            level = (gd.get("level") or "").upper()
+            level = {"V": "DEBUG", "D": "DEBUG", "I": "INFO", "W": "WARN", "E": "ERROR", "F": "FATAL"}.get(level, level)
+            fields = {k: v for k, v in gd.items() if v is not None}
             return LogEntry(
                 raw=line,
                 message=(gd.get("msg") or "").strip(),
-                level=(gd.get("level") or "").upper(),
+                level=level,
                 timestamp=gd.get("ts") or "",
-                logger=gd.get("logger") or "",
+                logger=(gd.get("logger") or "").strip(),
+                fields=fields,
             )
     return LogEntry(raw=line, message=line)
 

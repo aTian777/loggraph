@@ -51,6 +51,51 @@ Each candidate includes score, source file, line, function, matched log site, ca
 loggraph locate /tmp/loggraph-index.json --log-file app.log --top 3
 ```
 
+### Analyze a log as a runtime report
+
+```bash
+loggraph analyze . --log-file app.log --format markdown --context 3 --all-lines
+```
+
+The report includes runtime events, session timelines, missing expected events from `.loggraph/profile.yaml`, context windows around suspicious lines, and likely source areas.
+
+### Compare a successful log with a failed log
+
+```bash
+loggraph compare . --baseline success.log --target failed.log --all-lines
+```
+
+This highlights shared events, events missing from the failed target, extra target events, and missing expected sequence items.
+
+### Initialize or suggest a project profile
+
+```bash
+loggraph profile suggest .
+loggraph profile init .
+```
+
+Profiles live at `.loggraph/profile.yaml` and let each project define its own session keys, event patterns, and expected sequences:
+
+```yaml
+session_keys:
+  - deliveryId
+
+events:
+  await_pcb:
+    type: await_pcb
+    patterns:
+      - AwaitPcb
+  pcb_result:
+    type: pcb_result
+    patterns:
+      - callback received
+
+expected_sequences:
+  delivery_success:
+    - await_pcb
+    - pcb_result
+```
+
 ### Render a focused subgraph
 
 ```bash

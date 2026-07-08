@@ -214,6 +214,8 @@ export default function (pi: ExtensionAPI) {
       top: Type.Optional(Type.Number({ description: "Top candidates per log line.", default: 3 })),
       showMatches: Type.Optional(Type.Number({ description: "How many matched lines to show in the compact result.", default: 10 })),
       allLines: Type.Optional(Type.Boolean({ description: "Analyze all log lines instead of app-tag lines only.", default: false })),
+      context: Type.Optional(Type.Number({ description: "Include N log lines before/after suspicious events and source matches.", default: 3 })),
+      format: Type.Optional(Type.Union([Type.Literal("markdown"), Type.Literal("json")], { description: "Output format. Defaults to markdown for agent readability." })),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const project = normalizePath(ctx.cwd, params.project);
@@ -232,6 +234,10 @@ export default function (pi: ExtensionAPI) {
         String(params.top ?? 3),
         "--show-matches",
         String(params.showMatches ?? 10),
+        "--context",
+        String(params.context ?? 3),
+        "--format",
+        params.format ?? "markdown",
       ];
       if (params.out) args.push("--out", normalizePath(ctx.cwd, params.out));
       if (params.allLines) args.push("--all-lines");

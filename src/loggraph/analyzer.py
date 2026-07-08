@@ -23,7 +23,7 @@ def default_index_path(project_root: str | Path) -> Path:
     return default_cache_dir(project_root) / "index.json"
 
 
-def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, app_only: bool = True, project: str | Path | None = None) -> dict:
+def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, app_only: bool = True, project: str | Path | None = None, context: int = 0) -> dict:
     index = load_index(index_path)
     locator = Locator(index)
     path = Path(log_file)
@@ -43,11 +43,14 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
             events.append(event)
         candidates = locator.locate(entry, top=top)
         if candidates:
-            matches.append({
+            item = {
                 "line": no,
                 "log": line,
                 "candidates": [asdict(c) for c in candidates],
-            })
+            }
+            if context > 0:
+                item["context"] = context_window(lines, no, context)
+            matches.append(item)
 
     delivery_posts = extract_delivery_posts(lines)
     completed_rounds = [
@@ -55,6 +58,9 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
         for no, line in enumerate(lines, 1)
         if "一轮投递流程结束" in line
     ]
+
+    runtime_findings = summarize_events(events, profile=event_profile)
+    context_windows = build_context_windows(lines, runtime_findings, matches, context=context)
 
     return {
         "index_path": str(index_path),
@@ -74,13 +80,15 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
             "session_keys": event_profile.get("session_keys", [])[:10],
             "states": event_profile.get("states", [])[:10],
         },
-        "runtime_findings": summarize_events(events, profile=event_profile),
+        "runtime_findings": runtime_findings,
+        "context_windows": context_windows,
         "report_markdown": render_report(
             log_file=str(path),
             index_path=str(index_path),
             analyzed_lines=analyzed_lines,
             matches=matches,
-            runtime_findings=summarize_events(events, profile=event_profile),
+            runtime_findings=runtime_findings,
+            context_windows=context_windows,
             max_matches=top,
         ),
         "domain_findings": {
@@ -116,6 +124,27 @@ def write_analysis(report: dict, out: str | Path) -> None:
     Path(out).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def compare_logs(index_path: str | Path, baseline_log: str | Path, target_log: str | Path, *, project: str | Path | None = None, top: int = 3, app_only: bool = True, context: int = 0) -> dict:
+    baseline = analyze_log(index_path, baseline_log, top=top, app_only=app_only, project=project, context=context)
+    target = analyze_log(index_path, target_log, top=top, app_only=app_only, project=project, context=context)
+    baseline_labels = _timeline_labels(baseline)
+    target_labels = _timeline_labels(target)
+    missing = [label for label in baseline_labels if label not in target_labels]
+    extra = [label for label in target_labels if label not in baseline_labels]
+    shared = [label for label in target_labels if label in baseline_labels]
+    result = {
+        "baseline_log": str(baseline_log),
+        "target_log": str(target_log),
+        "baseline_summary": compact_summary(baseline, max_matches=5),
+        "target_summary": compact_summary(target, max_matches=5),
+        "shared_events": shared,
+        "missing_in_target": missing,
+        "extra_in_target": extra,
+    }
+    result["report_markdown"] = render_compare_report(result)
+    return result
+
+
 def compact_summary(report: dict, *, max_matches: int = 10) -> dict:
     return {
         "index_summary": report["index_summary"],
@@ -124,12 +153,13 @@ def compact_summary(report: dict, *, max_matches: int = 10) -> dict:
         "top_matches": report["matches"][:max_matches],
         "event_profile_summary": report.get("event_profile_summary", {}),
         "runtime_findings": report.get("runtime_findings", {}),
+        "context_windows": report.get("context_windows", []),
         "domain_findings": report["domain_findings"],
         "report_markdown": report.get("report_markdown", ""),
     }
 
 
-def render_report(*, log_file: str, index_path: str, analyzed_lines: int, matches: list[dict], runtime_findings: dict, max_matches: int = 3) -> str:
+def render_report(*, log_file: str, index_path: str, analyzed_lines: int, matches: list[dict], runtime_findings: dict, context_windows: list[dict] | None = None, max_matches: int = 3) -> str:
     lines = [
         "# LogGraph Findings",
         "",
@@ -177,6 +207,14 @@ def render_report(*, log_file: str, index_path: str, analyzed_lines: int, matche
             session = item.get("session_id") or "global"
             lines.append(f"- session `{session}` sequence `{item.get('sequence')}` missing: {', '.join(item.get('missing', []))}")
 
+    if context_windows:
+        lines.extend(["", "## Context windows"])
+        for window in context_windows[:5]:
+            lines.append(f"### Around line {window['line']}")
+            for row in window["lines"]:
+                marker = ">" if row["line"] == window["line"] else " "
+                lines.append(f"{marker} {row['line']}: {row['text']}")
+
     lines.extend(["", "## Suggested next actions"])
     if source_rows:
         focus = " ".join(row["function"].split(".")[-1] for row in source_rows[:3])
@@ -203,6 +241,67 @@ def _top_source_rows(matches: list[dict], *, max_rows: int) -> list[dict]:
             if prev is None or cand.get("score", 0) > prev.get("score", 0):
                 best[fid] = cand
     return sorted(best.values(), key=lambda c: (-c.get("score", 0), c.get("file", ""), c.get("line", 0)))[:max_rows]
+
+
+def context_window(lines: list[str], line_no: int, radius: int) -> list[dict]:
+    start = max(1, line_no - radius)
+    end = min(len(lines), line_no + radius)
+    return [{"line": idx, "text": lines[idx - 1]} for idx in range(start, end + 1)]
+
+
+def build_context_windows(lines: list[str], runtime_findings: dict, matches: list[dict], *, context: int) -> list[dict]:
+    if context <= 0:
+        return []
+    wanted = []
+    for event in runtime_findings.get("suspicious_events", [])[:10]:
+        if event.get("line"):
+            wanted.append(int(event["line"]))
+    for match in matches[:10]:
+        if match.get("line"):
+            wanted.append(int(match["line"]))
+    windows = []
+    seen = set()
+    for line_no in wanted:
+        if line_no in seen:
+            continue
+        seen.add(line_no)
+        windows.append({"line": line_no, "lines": context_window(lines, line_no, context)})
+    return windows
+
+
+def _timeline_labels(report: dict) -> list[str]:
+    labels = []
+    for timeline in report.get("runtime_findings", {}).get("session_timelines", []):
+        labels.extend(str(label) for label in timeline.get("labels", []))
+    if not labels:
+        labels = list(report.get("runtime_findings", {}).get("event_types", {}).keys())
+    return labels
+
+
+def render_compare_report(result: dict) -> str:
+    lines = [
+        "# LogGraph Compare Report",
+        "",
+        "## Inputs",
+        f"- Baseline: `{result['baseline_log']}`",
+        f"- Target: `{result['target_log']}`",
+        "",
+        "## Shared events",
+    ]
+    shared = result.get("shared_events", [])
+    lines.extend([f"- {item}" for item in shared[:20]] or ["- No shared events detected."])
+    lines.extend(["", "## Missing in target"])
+    missing = result.get("missing_in_target", [])
+    lines.extend([f"- {item}" for item in missing[:20]] or ["- No baseline events missing from target."])
+    lines.extend(["", "## Extra in target"])
+    extra = result.get("extra_in_target", [])
+    lines.extend([f"- {item}" for item in extra[:20]] or ["- No extra target events detected."])
+    target_missing = result.get("target_summary", {}).get("runtime_findings", {}).get("missing_events", [])
+    if target_missing:
+        lines.extend(["", "## Target missing expected events"])
+        for item in target_missing[:10]:
+            lines.append(f"- session `{item.get('session_id') or 'global'}` sequence `{item.get('sequence')}` missing: {', '.join(item.get('missing', []))}")
+    return "\n".join(lines)
 
 
 def _to_int(value: str) -> int:

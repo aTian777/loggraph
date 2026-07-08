@@ -47,19 +47,23 @@ class LogGraphCoreTests(unittest.TestCase):
             "2024-01-15 10:30:45.456 [worker] ERROR com.example.PaymentService - Payment failed",
             "Jan 15 10:30:45 localhost myapp[1234]: Application started",
             "timestamp=2024-01-15T10:30:45 level=ERROR message=Database connection failed",
+            "07-08 10:12:01.123 1234 5678 E PcbTag: state=AwaitPcb deliveryId=abc timeout",
             "2024-01-15 10:30:45 ERROR com.example.Service - Exception occurred",
             "java.lang.NullPointerException: null",
             "    at com.example.Service.process(Service.java:42)",
         ])
         entries = parse_log_text(text)
-        self.assertEqual(len(entries), 5)
+        self.assertEqual(len(entries), 6)
         self.assertEqual(entries[0].logger, "com.example.OrderService")
         self.assertEqual(entries[0].message, "Processing order: 12345")
         self.assertEqual(entries[1].level, "ERROR")
         self.assertEqual(entries[2].logger, "myapp")
         self.assertEqual(entries[2].level, "INFO")
         self.assertEqual(entries[3].message, "Database connection failed")
-        self.assertEqual(len(entries[4].raw.splitlines()), 3)
+        self.assertEqual(entries[4].logger, "PcbTag")
+        self.assertEqual(entries[4].level, "ERROR")
+        self.assertEqual(entries[4].fields["pid"], "1234")
+        self.assertEqual(len(entries[5].raw.splitlines()), 3)
 
     def test_multilanguage_indexing_and_incremental_cleanup(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -197,7 +201,7 @@ class LogGraphCoreTests(unittest.TestCase):
 
             stdout = io.StringIO()
             with redirect_stdout(stdout):
-                rc = cli_main(["analyze", str(root), "--log-file", str(log_file), "--index", str(out), "--all-lines"])
+                rc = cli_main(["analyze", str(root), "--log-file", str(log_file), "--index", str(out), "--all-lines", "--context", "1"])
             self.assertEqual(rc, 0)
             payload = json.loads(stdout.getvalue())
             self.assertGreaterEqual(payload["runtime_findings"]["event_count"], 1)
@@ -206,6 +210,7 @@ class LogGraphCoreTests(unittest.TestCase):
             self.assertGreater(payload["event_profile_summary"]["learned_patterns"], 0)
             self.assertIn("deliveryId", payload["event_profile_summary"]["session_keys"])
             self.assertIn("# LogGraph Findings", payload["report_markdown"])
+            self.assertTrue(payload["context_windows"])
             self.assertTrue(payload["runtime_findings"]["suggested_event_rules"])
 
             profile_path = root / ".loggraph" / "profile.yaml"
@@ -242,6 +247,28 @@ class LogGraphCoreTests(unittest.TestCase):
                 rc = cli_main(["profile", "suggest", str(root), "--index", str(out)])
             self.assertEqual(rc, 0)
             self.assertIn("session_keys:", stdout.getvalue())
+
+            generated_profile = root / ".loggraph" / "generated-profile.yaml"
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["profile", "init", str(root), "--index", str(out), "--out", str(generated_profile)])
+            self.assertEqual(rc, 0)
+            self.assertTrue(generated_profile.exists())
+
+            baseline = root / "success.log"
+            target = root / "failed.log"
+            baseline.write_text(
+                "ERROR [app] pcb state=AwaitPcb deliveryId=abc timeout\n"
+                "INFO [app] pcb callback received deliveryId=abc\n",
+                encoding="utf-8",
+            )
+            target.write_text("ERROR [app] pcb state=AwaitPcb deliveryId=abc timeout\n", encoding="utf-8")
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["compare", str(root), "--baseline", str(baseline), "--target", str(target), "--index", str(out), "--all-lines"])
+            self.assertEqual(rc, 0)
+            self.assertIn("Missing in target", stdout.getvalue())
+            self.assertIn("pcb_result", stdout.getvalue())
 
     def test_cli_init_workers_and_no_incremental_options(self):
         with tempfile.TemporaryDirectory() as tmp:
