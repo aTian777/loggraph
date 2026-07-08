@@ -54,9 +54,10 @@ def render_profile_suggestion(profile: dict[str, Any]) -> str:
     for state in profile.get("states", [])[:40]:
         lines.append(f"  - {state}")
     lines.extend(["", "events:"])
-    for item in profile.get("learned_patterns", [])[:30]:
-        name = _safe_name(str(item.get("pattern", "event")))
+    used_names: set[str] = set()
+    for idx, item in enumerate(profile.get("learned_patterns", [])[:30], 1):
         pattern = str(item.get("pattern", ""))
+        name = _unique_name(_safe_name(pattern), used_names, idx)
         lines.extend([
             f"  {name}:",
             f"    type: project:{name}",
@@ -189,3 +190,15 @@ def _unique(values: list[Any]) -> list[str]:
 def _safe_name(value: str) -> str:
     name = re.sub(r"[^A-Za-z0-9_]+", "_", value.strip().lower()).strip("_")
     return name or "event"
+
+
+def _unique_name(name: str, used: set[str], idx: int) -> str:
+    if name == "event":
+        name = f"event_{idx}"
+    candidate = name
+    suffix = 2
+    while candidate in used:
+        candidate = f"{name}_{suffix}"
+        suffix += 1
+    used.add(candidate)
+    return candidate

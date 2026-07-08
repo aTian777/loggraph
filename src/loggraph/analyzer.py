@@ -12,7 +12,9 @@ from loggraph.logs.parser import parse_log_block
 from loggraph.matchers.locator import Locator
 from loggraph.profile import load_project_profile, merge_profiles
 
-APP_TAG_HINTS = ("smart-recyclable---->", "插桩检测-红包", "Log日志", "BaseViewModel")
+APP_TAG_HINTS = ("smart-recyclable---->", "插桩检测-红包", "Log日志", "BaseViewModel", "com.hlkj.rvm")
+LOGCAT_HEADER_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3}\s+\d+-\d+\s+\S+\s+(?P<package>\S+)\s+[VDIWEF]\b")
+LOGCAT_CONTINUATION_PATTERN = re.compile(r"^\s*[│|]\s?(?P<msg>.*)$")
 
 
 def default_cache_dir(project_root: str | Path) -> Path:
@@ -23,7 +25,7 @@ def default_index_path(project_root: str | Path) -> Path:
     return default_cache_dir(project_root) / "index.json"
 
 
-def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, app_only: bool = True, project: str | Path | None = None, context: int = 0, source_context: int = 3, detail: str = "normal") -> dict:
+def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, app_only: bool = True, project: str | Path | None = None, context: int = 0, source_context: int = 3, detail: str = "normal", query: str = "") -> dict:
     index = load_index(index_path)
     locator = Locator(index)
     path = Path(log_file)
@@ -31,21 +33,22 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
     project_root = Path(project) if project else Path(index.root or Path(index_path).parent.parent)
     event_profile = merge_profiles(index.metadata.get("event_profile", {}), load_project_profile(project_root))
 
+    query_tokens = query_terms(query)
     matches = []
     events = []
     analyzed_lines = 0
-    for no, line in enumerate(lines, 1):
-        if app_only and not any(hint in line for hint in APP_TAG_HINTS):
+    for no, raw in iter_logical_log_entries(lines, app_only=app_only):
+        if query_tokens and not text_matches_query(raw, query_tokens):
             continue
         analyzed_lines += 1
-        entry = parse_log_block(line)
+        entry = parse_log_block(raw)
         if event := extract_event(entry, no, event_profile):
             events.append(event)
         candidates = locator.locate(entry, top=top)
         if candidates:
             item = {
                 "line": no,
-                "log": line,
+                "log": raw,
                 "candidates": enrich_candidates([asdict(c) for c in candidates], source_context=source_context),
             }
             if context > 0:
@@ -101,6 +104,35 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
     }
 
 
+def iter_logical_log_entries(lines: list[str], *, app_only: bool) -> list[tuple[int, str]]:
+    entries: list[tuple[int, str]] = []
+    current_no = 0
+    current_lines: list[str] = []
+    current_is_app = False
+
+    def flush() -> None:
+        if current_lines and (not app_only or current_is_app):
+            entries.append((current_no, "\n".join(current_lines)))
+
+    for no, line in enumerate(lines, 1):
+        header_match = LOGCAT_HEADER_PATTERN.match(line)
+        is_header = bool(header_match)
+        if is_header:
+            flush()
+            current_no = no
+            current_lines = [line]
+            package_name = header_match.group("package") if header_match else ""
+            current_is_app = package_name == "com.hlkj.rvm" or any(hint != "com.hlkj.rvm" and hint in line for hint in APP_TAG_HINTS)
+            continue
+        if current_lines:
+            current_lines.append(line)
+            continue
+        if not app_only or any(hint in line for hint in APP_TAG_HINTS):
+            entries.append((no, line))
+    flush()
+    return entries
+
+
 def extract_delivery_posts(lines: list[str]) -> list[dict]:
     posts = []
     for no, line in enumerate(lines, 1):
@@ -126,9 +158,9 @@ def write_analysis(report: dict, out: str | Path) -> None:
     Path(out).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def compare_logs(index_path: str | Path, baseline_log: str | Path, target_log: str | Path, *, project: str | Path | None = None, top: int = 3, app_only: bool = True, context: int = 0, detail: str = "normal") -> dict:
-    baseline = analyze_log(index_path, baseline_log, top=top, app_only=app_only, project=project, context=context, detail=detail)
-    target = analyze_log(index_path, target_log, top=top, app_only=app_only, project=project, context=context, detail=detail)
+def compare_logs(index_path: str | Path, baseline_log: str | Path, target_log: str | Path, *, project: str | Path | None = None, top: int = 3, app_only: bool = True, context: int = 0, detail: str = "normal", query: str = "") -> dict:
+    baseline = analyze_log(index_path, baseline_log, top=top, app_only=app_only, project=project, context=context, detail=detail, query=query)
+    target = analyze_log(index_path, target_log, top=top, app_only=app_only, project=project, context=context, detail=detail, query=query)
     baseline_labels = _timeline_labels(baseline)
     target_labels = _timeline_labels(target)
     missing = [label for label in baseline_labels if label not in target_labels]
@@ -497,6 +529,25 @@ def generate_compare_hypotheses(session_comparisons: list[dict], duration_anomal
         })
     hypotheses.extend(target.get("runtime_findings", {}).get("hypotheses", [])[:3])
     return hypotheses
+
+
+def query_terms(query: str) -> list[str]:
+    if not query:
+        return []
+    terms = re.findall(r"[A-Za-z0-9_\u4e00-\u9fff]{2,}", query.lower())
+    expanded = []
+    for term in terms:
+        expanded.append(term)
+        if term == "pcb":
+            expanded.extend(["主控", "称重", "皮带", "ota_pcb"])
+        if term in {"await", "等待"}:
+            expanded.extend(["await", "waiting", "等待"])
+    return sorted(set(expanded))
+
+
+def text_matches_query(text: str, terms: list[str]) -> bool:
+    hay = text.lower()
+    return any(term.lower() in hay for term in terms)
 
 
 def _to_int(value: str) -> int:

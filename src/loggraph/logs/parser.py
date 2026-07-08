@@ -9,6 +9,8 @@ LEVELS = r"DEBUG|INFO|WARNING|WARN|ERROR|EXCEPTION|CRITICAL|FATAL"
 
 # Pre-compile regex patterns for performance
 _PATTERNS = [
+    # Android Studio/logcat table export: 2026-07-08 14:26:32.680 1988-2010 Tag package I message
+    re.compile(r"(?P<ts>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(?P<pid>\d+)-(?P<tid>\d+)\s+(?P<logger>\S+)\s+(?P<package>\S+)\s+(?P<level>[VDIWEF])\s*(?P<msg>.*)"),
     # Android logcat: 07-08 10:12:01.123 1234 5678 I Tag: message
     re.compile(r"(?P<ts>\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(?P<pid>\d+)\s+(?P<tid>\d+)\s+(?P<level>[VDIWEF])\s+(?P<logger>[^:]+):\s*(?P<msg>.*)"),
     # Legacy Android logcat: I/Tag( 1234): message
@@ -46,12 +48,29 @@ def parse_log_block(block: str) -> LogEntry:
     if not entry:
         entry = LogEntry(raw=block, message=first)
     entry.raw = block
+    if not entry.message and len(block.splitlines()) > 1:
+        body = _continuation_message(block.splitlines()[1:])
+        if body:
+            entry.message = body
     if tb_frames:
         entry.stack_frames = tb_frames
         entry.exception_type = exc_type
         if exc_msg and (not entry.message or entry.message == first):
             entry.message = exc_msg
     return entry
+
+
+def _continuation_message(lines: list[str]) -> str:
+    messages = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(("┌", "└", "─")):
+            continue
+        if stripped.startswith(("│", "|")):
+            messages.append(stripped[1:].strip())
+        elif stripped:
+            messages.append(stripped)
+    return "\n".join(messages)
 
 
 def _parse_json(line: str) -> LogEntry | None:

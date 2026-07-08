@@ -11,6 +11,8 @@ CLASS_RE = re.compile(r"\b(class|object|interface)\s+([A-Za-z_][A-Za-z0-9_]*)")
 CALL_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*\(")
 LOG_RE = re.compile(r"\b(?:L|Log|logger)\.([A-Za-z][A-Za-z0-9_]*)\s*(?:\([^)]*\))?\s*\{\s*\"(.*?)\"", re.S)
 ANDROID_LOG_RE = re.compile(r"\bLog\.([diwev])\s*\([^,]+,\s*\"(.*?)\"", re.S)
+LOGX_TAG_RE = re.compile(r"\bLogX\.([diwev]Tag|[diwev]TagThrottled)\s*\([^,]+,\s*\"(.*?)\"", re.S)
+LOGX_SIMPLE_RE = re.compile(r"\bLogX\.([diwev])\s*\(\s*\"(.*?)\"", re.S)
 
 
 class KotlinRegexParser(SourceParser):
@@ -96,6 +98,17 @@ class KotlinRegexParser(SourceParser):
             template = self._clean_template(m.group(2))
             line = start_line + body.count("\n", 0, m.start())
             self._add_site(index, fid, level, template, path, line, f"Log.{m.group(1)}")
+        for m in LOGX_TAG_RE.finditer(body):
+            raw_level = m.group(1)
+            level = raw_level[0].lower()
+            template = self._clean_template(m.group(2))
+            line = start_line + body.count("\n", 0, m.start())
+            self._add_site(index, fid, level, template, path, line, f"LogX.{raw_level}")
+        for m in LOGX_SIMPLE_RE.finditer(body):
+            level = m.group(1).lower()
+            template = self._clean_template(m.group(2))
+            line = start_line + body.count("\n", 0, m.start())
+            self._add_site(index, fid, level, template, path, line, f"LogX.{m.group(1)}")
 
     def _clean_template(self, template: str) -> str:
         return re.sub(r"\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*", "{}", template)
