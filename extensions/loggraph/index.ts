@@ -210,6 +210,63 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("loggraph", {
+    description: "Smart LogGraph entry: /loggraph [init|<log-file>|<log line>]",
+    handler: async (args, ctx) => {
+      const trimmed = args.trim();
+      const parts = splitCommandArgs(trimmed);
+      const action = (parts[0] ?? "").toLowerCase();
+      const initActions = new Set(["init", "index", "初始化", "索引"]);
+      const analyzeActions = new Set(["analyze", "analyse", "log", "logs", "分析", "日志"]);
+
+      if (!trimmed || initActions.has(action)) {
+        const rest = initActions.has(action) ? parts.slice(1) : parts;
+        const [projectArg, srcArg] = rest;
+        const project = projectArg ? normalizePath(ctx.cwd, projectArg) : ctx.cwd;
+        const cliArgs = ["init", project];
+        if (srcArg) cliArgs.push("--src", normalizePath(ctx.cwd, srcArg));
+        ctx.ui.notify(`Initializing LogGraph index for ${project}...`, "info");
+        try {
+          const stdout = await runLogGraph(pi, cliArgs, ctx.cwd, undefined);
+          ctx.ui.notify(summarizeInitResult(stdout), "info");
+        } catch (error) {
+          ctx.ui.notify(`LogGraph initialization failed.\n${errorMessage(error)}`, "error");
+        }
+        return;
+      }
+
+      const analyzeInput = analyzeActions.has(action) ? parts.slice(1).join(" ") : trimmed;
+      const parsed = parseAnalyzeArgs(ctx.cwd, analyzeInput);
+      if (!("error" in parsed) && isFile(parsed.logFile)) {
+        const index = projectIndexPath(parsed.project);
+        if (!existsSync(index)) {
+          ctx.ui.notify(`Missing index: ${index}. Run /loggraph init first.`, "error");
+          return;
+        }
+        ctx.ui.notify(`Analyzing log with LogGraph: ${parsed.logFile}`, "info");
+        try {
+          const stdout = await runLogGraph(pi, ["analyze", parsed.project, "--log-file", parsed.logFile, "--index", index], ctx.cwd, undefined);
+          ctx.ui.notify(stdout, "info");
+        } catch (error) {
+          ctx.ui.notify(`LogGraph analysis failed.\n${errorMessage(error)}`, "error");
+        }
+        return;
+      }
+
+      const index = projectIndexPath(ctx.cwd);
+      if (!existsSync(index)) {
+        ctx.ui.notify(`No LogGraph index found at ${index}. Run /loggraph init first.`, "error");
+        return;
+      }
+      try {
+        const stdout = await runLogGraph(pi, ["query", index, "--log", trimmed, "--top", "3"], ctx.cwd, undefined);
+        ctx.ui.notify(stdout, "info");
+      } catch (error) {
+        ctx.ui.notify(`LogGraph query failed.\n${errorMessage(error)}`, "error");
+      }
+    },
+  });
+
   pi.registerCommand("loggraph-init", {
     description: "Initialize LogGraph cache: /loggraph-init [project] [src]",
     handler: async (args, ctx) => {
