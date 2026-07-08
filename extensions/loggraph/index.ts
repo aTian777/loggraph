@@ -17,6 +17,35 @@ function projectIndexPath(project: string): string {
   return join(project, ".loggraph", "index.json");
 }
 
+function summarizeInitResult(stdout: string): string {
+  try {
+    const payload = JSON.parse(stdout) as {
+      project?: string;
+      src?: string;
+      cache?: string;
+      functions?: number;
+      calls?: number;
+      log_sites?: number;
+      incremental?: boolean;
+      workers?: number | string;
+    };
+    return [
+      "LogGraph initialized successfully.",
+      `Project: ${payload.project ?? "unknown"}`,
+      `Source: ${payload.src ?? "unknown"}`,
+      `Index: ${payload.cache ?? "unknown"}`,
+      `Functions: ${payload.functions ?? 0}, Calls: ${payload.calls ?? 0}, Log sites: ${payload.log_sites ?? 0}`,
+      `Incremental: ${payload.incremental ?? "unknown"}, Workers: ${payload.workers ?? "sequential"}`,
+    ].join("\n");
+  } catch {
+    return `LogGraph initialized successfully.\n${stdout}`;
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function runLogGraph(
   pi: ExtensionAPI,
   args: string[],
@@ -130,8 +159,13 @@ export default function (pi: ExtensionAPI) {
       const project = projectArg ? normalizePath(ctx.cwd, projectArg) : ctx.cwd;
       const cliArgs = ["init", project];
       if (srcArg) cliArgs.push("--src", normalizePath(ctx.cwd, srcArg));
-      const stdout = await runLogGraph(pi, cliArgs, ctx.cwd, undefined);
-      ctx.ui.notify(stdout, "info");
+      ctx.ui.notify(`Initializing LogGraph index for ${project}...`, "info");
+      try {
+        const stdout = await runLogGraph(pi, cliArgs, ctx.cwd, undefined);
+        ctx.ui.notify(summarizeInitResult(stdout), "info");
+      } catch (error) {
+        ctx.ui.notify(`LogGraph initialization failed.\n${errorMessage(error)}`, "error");
+      }
     },
   });
 
