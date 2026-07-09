@@ -84,28 +84,35 @@ function resolveExistingFilePrefix(cwd: string, parts: string[]): { file: string
   return undefined;
 }
 
-function parseAnalyzeArgs(cwd: string, args: string): { project: string; logFile: string } | { error: string } {
+function parseLogFileAndQuery(cwd: string, args: string): { project: string; logFile: string; query: string } | { error: string } {
   const parts = splitCommandArgs(args.trim());
   if (parts.length === 0) {
-    return { error: "Usage: /loggraph-analyze <log-file> or /loggraph-analyze <project> <log-file>" };
+    return { error: "Usage: /loggraph <log-file> [query] or /loggraph <project> <log-file> [query]" };
   }
 
   const entireArgAsFile = normalizePath(cwd, args.trim());
   if (isFile(entireArgAsFile)) {
-    return { project: cwd, logFile: entireArgAsFile };
+    return { project: cwd, logFile: entireArgAsFile, query: "" };
   }
 
   const projectCandidate = normalizePath(cwd, parts[0]);
   if (parts.length >= 2 && isDirectory(projectCandidate)) {
     const logFilePrefix = resolveExistingFilePrefix(cwd, parts.slice(1));
-    return {
-      project: projectCandidate,
-      logFile: logFilePrefix?.file ?? normalizePath(cwd, parts[1]),
-    };
+    if (logFilePrefix) {
+      return {
+        project: projectCandidate,
+        logFile: logFilePrefix.file,
+        query: parts.slice(1 + logFilePrefix.used).join(" "),
+      };
+    }
+    return { project: projectCandidate, logFile: normalizePath(cwd, parts[1]), query: parts.slice(2).join(" ") };
   }
 
   const logFilePrefix = resolveExistingFilePrefix(cwd, parts);
-  return { project: cwd, logFile: logFilePrefix?.file ?? normalizePath(cwd, parts[0]) };
+  if (logFilePrefix) {
+    return { project: cwd, logFile: logFilePrefix.file, query: parts.slice(logFilePrefix.used).join(" ") };
+  }
+  return { project: cwd, logFile: normalizePath(cwd, parts[0]), query: parts.slice(1).join(" ") };
 }
 
 async function runLogGraph(
@@ -255,6 +262,55 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "loggraph_explain",
+    label: "LogGraph Explain",
+    description: "Explain a focused log question using LogGraph diagnosis, evidence trace, and profile warnings.",
+    promptSnippet: "Explain a log question using LogGraph evidence trace.",
+    promptGuidelines: [
+      "Use loggraph_explain when the user asks why a log flow is stuck, waiting, failed, or missing a follow-up event.",
+      "Summarize the diagnosis in the user's language and cite the evidence trace/source functions.",
+    ],
+    parameters: Type.Object({
+      project: Type.String({ description: "Project root directory containing .loggraph/index.json." }),
+      logFile: Type.String({ description: "Log file to explain." }),
+      index: Type.Optional(Type.String({ description: "Index cache path. Defaults to <project>/.loggraph/index.json." })),
+      query: Type.Optional(Type.String({ description: "Natural-language focus query, e.g. 'pcb await' or 'upload failed'." })),
+      top: Type.Optional(Type.Number({ description: "Top source areas to include.", default: 3 })),
+      allLines: Type.Optional(Type.Boolean({ description: "Analyze all log lines instead of app-tag lines only.", default: false })),
+      context: Type.Optional(Type.Number({ description: "Include N log lines before/after source matches.", default: 3 })),
+      sourceContext: Type.Optional(Type.Number({ description: "Include N source lines around each candidate.", default: 3 })),
+      format: Type.Optional(Type.Union([Type.Literal("markdown"), Type.Literal("json")], { description: "Output format. Defaults to markdown." })),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      const project = normalizePath(ctx.cwd, params.project);
+      const index = params.index ? normalizePath(ctx.cwd, params.index) : projectIndexPath(project);
+      if (!existsSync(index)) {
+        throw new Error(`LogGraph index not found: ${index}. Run loggraph_init first.`);
+      }
+      const args = [
+        "explain",
+        project,
+        "--log-file",
+        normalizePath(ctx.cwd, params.logFile),
+        "--index",
+        index,
+        "--top",
+        String(params.top ?? 3),
+        "--context",
+        String(params.context ?? 3),
+        "--source-context",
+        String(params.sourceContext ?? 3),
+        "--format",
+        params.format ?? "markdown",
+      ];
+      if (params.query) args.push("--query", params.query);
+      if (params.allLines) args.push("--all-lines");
+      const stdout = await runLogGraph(pi, args, ctx.cwd, signal);
+      return { content: [{ type: "text", text: stdout }], details: { stdout } };
+    },
+  });
+
+  pi.registerTool({
     name: "loggraph_query",
     label: "LogGraph Query",
     description: "Query one log line/message against an existing LogGraph index and return ranked source candidates.",
@@ -271,13 +327,14 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("loggraph", {
-    description: "Smart LogGraph entry: /loggraph [init|<log-file>|<log line>]",
+    description: "Smart LogGraph entry: /loggraph [init|explain|<log-file> [query]|<log line>]",
     handler: async (args, ctx) => {
       const trimmed = args.trim();
       const parts = splitCommandArgs(trimmed);
       const action = (parts[0] ?? "").toLowerCase();
       const initActions = new Set(["init", "index", "初始化", "索引"]);
       const analyzeActions = new Set(["analyze", "analyse", "log", "logs", "分析", "日志"]);
+      const explainActions = new Set(["explain", "why", "诊断", "解释", "为什么"]);
       const compareActions = new Set(["compare", "diff", "对比", "比较"]);
       const auditActions = new Set(["audit", "quality", "审计", "质量"]);
       const profileActions = new Set(["profile", "配置", "画像"]);
@@ -361,25 +418,31 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      const analyzeInput = analyzeActions.has(action) ? parts.slice(1).join(" ") : trimmed;
-      const parsed = parseAnalyzeArgs(ctx.cwd, analyzeInput);
+      const logInput = analyzeActions.has(action) || explainActions.has(action) ? parts.slice(1).join(" ") : trimmed;
+      const parsed = parseLogFileAndQuery(ctx.cwd, logInput);
       if (!("error" in parsed) && isFile(parsed.logFile)) {
         const index = projectIndexPath(parsed.project);
         if (!existsSync(index)) {
           ctx.ui.notify(`Missing index: ${index}. Run /loggraph init first.`, "error");
           return;
         }
-        ctx.ui.notify(`Routing LogGraph analysis to the agent: ${parsed.logFile}`, "info");
+        const shouldExplain = explainActions.has(action) || Boolean(parsed.query.trim());
+        ctx.ui.notify(`Routing LogGraph ${shouldExplain ? "explanation" : "analysis"} to the agent: ${parsed.logFile}`, "info");
         pi.sendUserMessage([
           {
             type: "text",
             text: [
-              "Use LogGraph to analyze this log file, then explain the result to the user.",
-              "Do not stop at raw candidate JSON: inspect the relevant candidate source files if needed and answer the user's question.",
+              shouldExplain
+                ? "Use LogGraph to explain this focused log question, then answer the user in Chinese."
+                : "Use LogGraph to analyze this log file, then explain the result to the user in Chinese.",
+              "Do not stop at raw tool output: cite the diagnosis/evidence trace/source functions and give concrete next steps.",
               `Project: ${parsed.project}`,
               `Log file: ${parsed.logFile}`,
+              `Focus query: ${parsed.query || "(none)"}`,
               `Original request: ${trimmed}`,
-              "Start by calling the loggraph_analyze tool with the project and log file above. Pass the user's question as the query parameter when it contains focus terms such as state, timeout, failed, upload, or domain words from the project profile.",
+              shouldExplain
+                ? "Start by calling loggraph_explain with project, logFile, and query. Then summarize: 1) most likely stuck point, 2) key evidence, 3) source functions to inspect, 4) profile warnings/adjustments."
+                : "Start by calling loggraph_analyze with project and logFile. If the user included focus terms, pass them as query.",
             ].join("\n"),
           },
         ]);

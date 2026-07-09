@@ -123,6 +123,8 @@ Inside Pi, `/loggraph` supports common workflows:
 
 ```text
 /loggraph init
+/loggraph explain app.log pcb await
+/loggraph app.log pcb await
 /loggraph app.log 为什么失败
 /loggraph compare success.log failed.log
 /loggraph audit
