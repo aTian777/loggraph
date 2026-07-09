@@ -421,12 +421,18 @@ export default function (pi: ExtensionAPI) {
           if (query) cliArgs.push("--query", query);
         } else if (sub === "lint") {
           const logFile = resolveExistingFilePrefix(ctx.cwd, rest);
+          const lintWords = logFile ? rest.slice(logFile.used) : rest;
+          const wantsStrict = lintWords.some((word) => ["strict", "严格"].includes(word.toLowerCase()));
+          const wantsFixSuggest = lintWords.some((word) => ["fix", "fix-suggest", "cleanup", "修复", "清理"].includes(word.toLowerCase()));
+          const queryWords = lintWords.filter((word) => !["strict", "严格", "fix", "fix-suggest", "cleanup", "修复", "清理"].includes(word.toLowerCase()));
           if (logFile) {
             reviewLogFile = logFile.file;
-            reviewQuery = rest.slice(logFile.used).join(" ");
+            reviewQuery = queryWords.join(" ");
             cliArgs.push("--log-file", logFile.file, "--all-lines");
             if (reviewQuery) cliArgs.push("--query", reviewQuery);
           }
+          if (wantsFixSuggest) cliArgs.push("--fix-suggest");
+          if (wantsStrict) cliArgs.push("--strict");
         } else if (sub === "apply") {
           const patchFile = resolveExistingFilePrefix(ctx.cwd, rest);
           if (!patchFile) {
@@ -464,7 +470,7 @@ export default function (pi: ExtensionAPI) {
                 type: "text",
                 text: [
                   "Explain this LogGraph profile lint report in Chinese.",
-                  "Summarize: 1) which profile rules are risky/noisy, 2) which warnings are only informational, 3) what concrete profile edits you recommend, 4) whether the user should run refine/suggest again.",
+                  "Summarize: 1) which profile rules are risky/noisy, 2) which warnings are only informational, 3) what concrete profile edits you recommend, 4) whether the Suggested cleanup items are safe to apply manually, 5) whether the user should run refine/suggest again.",
                   `Project: ${ctx.cwd}`,
                   `Log file: ${reviewLogFile || "(none)"}`,
                   `Focus query: ${reviewQuery || "(none)"}`,

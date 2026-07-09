@@ -197,11 +197,13 @@ def cmd_profile_sequence(args):
 
 def cmd_profile_lint(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
-    report = lint_profile(args.project, index_path, log_file=args.log_file, query=args.query or "", all_lines=args.all_lines)
+    report = lint_profile(args.project, index_path, log_file=args.log_file, query=args.query or "", all_lines=args.all_lines, fix_suggest=args.fix_suggest)
     if args.format == "markdown":
         print(render_profile_lint_report(report))
     else:
         print(json.dumps(report, ensure_ascii=False, indent=2))
+    if args.strict and any(problem.get("severity") in {"error", "warning"} for problem in report.get("problems", [])):
+        return 1
 
 
 def cmd_audit(args):
@@ -355,6 +357,8 @@ def build_parser():
     pl.add_argument("--log-file", help="Validate profile rules against a real log file.")
     pl.add_argument("--query", help="Focus log-based lint checks on these terms.")
     pl.add_argument("--all-lines", action="store_true")
+    pl.add_argument("--fix-suggest", action="store_true", help="Include structured cleanup suggestions. Does not modify profile files.")
+    pl.add_argument("--strict", action="store_true", help="Exit 1 when warnings or errors are found; info-level findings do not fail.")
     pl.add_argument("--format", choices=["json", "markdown"], default="markdown")
     pl.set_defaults(func=cmd_profile_lint)
     pa = profile_sub.add_parser("apply")

@@ -93,7 +93,7 @@ def render_doctor_report(status: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def lint_profile(project: str | Path, index_path: str | Path, *, log_file: str | Path | None = None, query: str = "", all_lines: bool = False) -> dict[str, Any]:
+def lint_profile(project: str | Path, index_path: str | Path, *, log_file: str | Path | None = None, query: str = "", all_lines: bool = False, fix_suggest: bool = False) -> dict[str, Any]:
     project_path = Path(project)
     profile_path = default_profile_path(project_path)
     profile = load_project_profile(project_path)
@@ -106,7 +106,7 @@ def lint_profile(project: str | Path, index_path: str | Path, *, log_file: str |
     if not profile_path.exists():
         problems.append({"severity": "error", "type": "missing_profile", "message": f"Profile does not exist: {profile_path}"})
         suggestions.append("Run `loggraph profile init <project>` or `loggraph profile suggest <project> --from-log <log>`.")
-        return _profile_lint_payload(project_path, profile_path, problems, suggestions, event_match_counts, session_key_counts, profile_warnings, log_file, query)
+        return _profile_lint_payload(project_path, profile_path, problems, suggestions, event_match_counts, session_key_counts, profile_warnings, log_file, query, fix_suggest=fix_suggest)
 
     events = profile.get("events") or {}
     expected_sequences = profile.get("expected_sequences") or {}
@@ -179,7 +179,7 @@ def lint_profile(project: str | Path, index_path: str | Path, *, log_file: str |
             problems.append({"severity": "warning", "type": "analysis_failed", "message": f"Could not run log-based profile validation: {exc}"})
 
     suggestions = _dedupe_strings(suggestions)
-    return _profile_lint_payload(project_path, profile_path, problems, suggestions, event_match_counts, session_key_counts, profile_warnings, log_file, query)
+    return _profile_lint_payload(project_path, profile_path, problems, suggestions, event_match_counts, session_key_counts, profile_warnings, log_file, query, fix_suggest=fix_suggest)
 
 
 def render_profile_lint_report(report: dict[str, Any]) -> str:
@@ -216,11 +216,17 @@ def render_profile_lint_report(report: dict[str, Any]) -> str:
             lines.append(f"- `{key}`: {count}")
     lines.extend(["", "## Suggestions"])
     lines.extend([f"- {item}" for item in report.get("suggestions", [])] or ["- No immediate profile changes suggested."])
+    if report.get("fix_suggestions"):
+        lines.extend(["", "## Suggested cleanup"])
+        for item in report["fix_suggestions"]:
+            target = f" `{item.get('target')}`" if item.get("target") else ""
+            lines.append(f"- **{item.get('action')}**{target}: {item.get('reason')}")
     return "\n".join(lines)
 
 
-def _profile_lint_payload(project: Path, profile_path: Path, problems: list[dict[str, Any]], suggestions: list[str], event_match_counts: dict[str, int], session_key_counts: dict[str, int], profile_warnings: list[dict[str, Any]], log_file: str | Path | None, query: str) -> dict[str, Any]:
+def _profile_lint_payload(project: Path, profile_path: Path, problems: list[dict[str, Any]], suggestions: list[str], event_match_counts: dict[str, int], session_key_counts: dict[str, int], profile_warnings: list[dict[str, Any]], log_file: str | Path | None, query: str, *, fix_suggest: bool = False) -> dict[str, Any]:
     profile = load_project_profile(project)
+    unique_problems = _dedupe_problem_dicts(problems)
     return {
         "project": str(project.resolve()),
         "profile": str(profile_path),
@@ -233,12 +239,65 @@ def _profile_lint_payload(project: Path, profile_path: Path, problems: list[dict
             "events": len(profile.get("events") or {}),
             "expected_sequences": len(profile.get("expected_sequences") or {}),
         },
-        "problems": _dedupe_problem_dicts(problems),
+        "problems": unique_problems,
         "suggestions": _dedupe_strings(suggestions),
+        "fix_suggestions": generate_profile_fix_suggestions(unique_problems, event_match_counts, session_key_counts) if fix_suggest else [],
         "event_match_counts": event_match_counts,
         "session_key_counts": session_key_counts,
         "profile_warnings": profile_warnings,
     }
+
+
+def generate_profile_fix_suggestions(problems: list[dict[str, Any]], event_match_counts: dict[str, int], session_key_counts: dict[str, int]) -> list[dict[str, str]]:
+    fixes: list[dict[str, str]] = []
+    for problem in problems:
+        message = str(problem.get("message", ""))
+        problem_type = str(problem.get("type", ""))
+        if problem_type == "unused_session_key":
+            key = _extract_backtick_value(message)
+            if key:
+                fixes.append({"action": "review_remove_session_key", "target": key, "reason": "It was not observed in this log slice; remove it only if absent from representative logs."})
+        elif problem_type == "suspicious_session_key":
+            key = _extract_backtick_value(message)
+            if key:
+                fixes.append({"action": "remove_session_key", "target": key, "reason": "It looks like a method/function name rather than a stable correlation field."})
+        elif problem_type == "generic_event_pattern":
+            values = re.findall(r"`([^`]+)`", message)
+            if len(values) >= 2:
+                fixes.append({"action": "narrow_event_pattern", "target": values[0], "reason": f"Pattern `{values[1]}` is too generic and may over-match unrelated logs."})
+        elif problem_type == "generic_alias":
+            values = re.findall(r"`([^`]+)`", message)
+            if len(values) >= 2:
+                fixes.append({"action": "remove_or_narrow_alias", "target": values[1], "reason": f"Alias under entity `{values[0]}` is too generic."})
+        elif problem_type == "unmatched_event":
+            event = _extract_backtick_value(message)
+            if event and event_match_counts.get(event, 0) == 0:
+                fixes.append({"action": "review_event_patterns", "target": event, "reason": "No patterns matched this log slice; update the patterns or remove the event if it is not relevant."})
+        elif problem_type == "sequence_session_mismatch":
+            event = _extract_backtick_value(message)
+            fixes.append({"action": "review_expected_sequence", "target": event, "reason": "The event matched logs but not the same session/timeline; split the sequence or add a shared correlation key."})
+        elif problem_type == "undefined_sequence_event":
+            values = re.findall(r"`([^`]+)`", message)
+            if len(values) >= 2:
+                fixes.append({"action": "remove_or_define_sequence_event", "target": values[1], "reason": f"Sequence `{values[0]}` references an event not defined in profile."})
+    return _dedupe_fix_suggestions(fixes)
+
+
+def _extract_backtick_value(message: str) -> str:
+    match = re.search(r"`([^`]+)`", message)
+    return match.group(1) if match else ""
+
+
+def _dedupe_fix_suggestions(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    seen = set()
+    unique = []
+    for item in items:
+        key = (item.get("action"), item.get("target"), item.get("reason"))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
 
 
 def _normalize_profile_warning(warning: dict[str, Any], event_match_counts: dict[str, int]) -> dict[str, Any]:
