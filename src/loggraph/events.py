@@ -86,7 +86,8 @@ def summarize_events(events: list[RuntimeEvent], *, limit: int = 20, profile: di
     sessions = Counter(event.session_id for event in events if event.session_id)
     suspicious = [event.to_dict() for event in events if event.type in {"error", "exception", "timeout", "retry"}]
     timeline = [event.to_dict() for event in events[:limit]]
-    session_timelines = build_session_timelines(events, limit=limit, profile=profile)
+    all_session_timelines = build_session_timelines(events, limit=0, profile=profile)
+    session_timelines = all_session_timelines[:limit]
     return {
         "event_count": len(events),
         "event_types": dict(counts),
@@ -94,7 +95,7 @@ def summarize_events(events: list[RuntimeEvent], *, limit: int = 20, profile: di
         "session_timelines": session_timelines,
         "timeline": timeline,
         "suspicious_events": suspicious[:limit],
-        "missing_events": find_missing_events(session_timelines, profile or {}),
+        "missing_events": find_missing_events(all_session_timelines, profile or {}),
         "duration_stats": summarize_durations(events, profile=profile),
         "suggested_event_rules": suggest_event_rules(events),
     }
@@ -118,7 +119,8 @@ def build_session_timelines(events: list[RuntimeEvent], *, limit: int = 20, prof
             "labels": labels,
             "events": [event.to_dict() for event in items[:limit]],
         })
-    return sorted(timelines, key=lambda item: (-item["event_count"], item["session_id"]))[:limit]
+    sorted_timelines = sorted(timelines, key=lambda item: (-item["event_count"], item["session_id"]))
+    return sorted_timelines if limit <= 0 else sorted_timelines[:limit]
 
 
 def find_missing_events(session_timelines: list[dict[str, Any]], profile: dict[str, Any]) -> list[dict[str, Any]]:

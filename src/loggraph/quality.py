@@ -395,6 +395,7 @@ def generate_cleanup_patch(problems: list[dict[str, Any]], event_match_counts: d
     after explicit user review.
     """
     remove_session_keys: list[str] = []
+    review_session_keys: list[str] = []
     review_events: list[str] = []
     remove_events: list[str] = []
     review_sequences: dict[str, list[str]] = {}
@@ -406,7 +407,7 @@ def generate_cleanup_patch(problems: list[dict[str, Any]], event_match_counts: d
             remove_session_keys.append(values[0])
         elif problem_type == "unused_session_key" and values:
             # Unused in one log slice is not enough for automatic deletion; mark review-only.
-            remove_session_keys.append(values[0])
+            review_session_keys.append(values[0])
         elif problem_type == "unmatched_event" and values:
             event = values[0]
             if event_match_counts.get(event, 0) == 0:
@@ -423,6 +424,8 @@ def generate_cleanup_patch(problems: list[dict[str, Any]], event_match_counts: d
         patch["remove_session_keys"] = _dedupe_strings(remove_session_keys)
     if remove_events:
         patch["remove_events"] = _dedupe_strings(remove_events)
+    if review_session_keys:
+        patch["review_session_keys"] = _dedupe_strings(review_session_keys)
     if review_events:
         patch["review_events"] = _dedupe_strings(review_events)
     if review_sequences:
@@ -521,6 +524,7 @@ def cleanup_profile(project: str | Path, patch: dict[str, Any], *, apply: bool =
     profile = load_project_profile(project_path)
     remove_session_keys = [str(item) for item in patch.get("remove_session_keys") or []]
     remove_events = [str(item) for item in patch.get("remove_events") or []]
+    review_session_keys = [str(item) for item in patch.get("review_session_keys") or []]
     review_events = [str(item) for item in patch.get("review_events") or []]
     review_sequences = patch.get("review_sequences") or {}
 
@@ -553,6 +557,7 @@ def cleanup_profile(project: str | Path, patch: dict[str, Any], *, apply: bool =
             "events": [name for name in before["events"] if name not in after["events"]],
         },
         "review_only": {
+            "session_keys": review_session_keys,
             "events": review_events,
             "sequences": review_sequences,
         },
@@ -677,8 +682,11 @@ def render_cleanup_report(report: dict[str, Any]) -> str:
     lines.append("### Events")
     lines.extend([f"- `{item}`" for item in removed.get("events", [])] or ["- none"])
     review = report.get("review_only", {})
-    if review.get("events") or review.get("sequences"):
+    if review.get("session_keys") or review.get("events") or review.get("sequences"):
         lines.extend(["", "## Review-only items"])
+        if review.get("session_keys"):
+            lines.append("### Session keys to review")
+            lines.extend([f"- `{item}`" for item in review.get("session_keys", [])])
         if review.get("events"):
             lines.append("### Events to review")
             lines.extend([f"- `{item}`" for item in review.get("events", [])])

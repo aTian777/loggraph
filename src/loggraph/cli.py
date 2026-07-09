@@ -238,7 +238,8 @@ def cmd_diagnose(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
     report = diagnose_project(args.project, index_path, args.log_file, query=args.query or "", all_lines=args.all_lines)
     if args.save_artifacts:
-        report["artifacts"] = save_diagnosis_artifacts(args.project, args.log_file, report)
+        report["artifacts"] = diagnosis_artifact_paths(args.project, args.log_file)
+        save_diagnosis_artifacts(report)
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         if args.format == "markdown":
@@ -255,20 +256,24 @@ def cmd_diagnose(args):
         print(json.dumps(report, ensure_ascii=False, indent=2))
 
 
-def save_diagnosis_artifacts(project: str, log_file: str, report: dict) -> dict[str, str]:
+def diagnosis_artifact_paths(project: str, log_file: str) -> dict[str, str]:
     out_dir = Path(project) / ".loggraph" / "reports"
-    out_dir.mkdir(parents=True, exist_ok=True)
     stem = Path(log_file).stem
-    paths = {
-        "markdown": out_dir / f"{stem}.diagnosis.md",
-        "json": out_dir / f"{stem}.diagnosis.json",
-        "cleanup": out_dir / f"{stem}.cleanup.json",
+    return {
+        "markdown": str(out_dir / f"{stem}.diagnosis.md"),
+        "json": str(out_dir / f"{stem}.diagnosis.json"),
+        "cleanup": str(out_dir / f"{stem}.cleanup.json"),
     }
+
+
+def save_diagnosis_artifacts(report: dict) -> None:
+    paths = {key: Path(value) for key, value in report["artifacts"].items()}
+    for path in paths.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
     paths["markdown"].write_text(report["report_markdown"], encoding="utf-8")
     paths["json"].write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     cleanup_patch = report.get("profile_lint", {}).get("cleanup_patch") or {}
     paths["cleanup"].write_text(json.dumps({"cleanup_patch": cleanup_patch}, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {key: str(path) for key, path in paths.items()}
 
 
 def cmd_compare(args):

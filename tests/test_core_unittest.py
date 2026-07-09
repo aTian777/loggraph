@@ -11,7 +11,7 @@ from loggraph.logs.parser import parse_log_block, parse_log_text
 from loggraph.logs.templates import template_matches, similarity, template_to_regex
 from loggraph.models import LogSite
 from loggraph.matchers.locator import Locator
-from loggraph.profile import parse_simple_yaml
+from loggraph.profile import merge_manual_profiles, parse_simple_yaml
 from loggraph.evaluation.runner import evaluate
 from loggraph.graph.render import render_dot
 
@@ -319,6 +319,8 @@ class LogGraphCoreTests(unittest.TestCase):
             self.assertTrue((root / ".loggraph" / "reports" / "failed.diagnosis.md").exists())
             self.assertTrue((root / ".loggraph" / "reports" / "failed.diagnosis.json").exists())
             self.assertTrue((root / ".loggraph" / "reports" / "failed.cleanup.json").exists())
+            saved_report = json.loads((root / ".loggraph" / "reports" / "failed.diagnosis.json").read_text(encoding="utf-8"))
+            self.assertIn("artifacts", saved_report)
 
             patch_file = root / "patch.yaml"
             stdout = io.StringIO()
@@ -353,7 +355,7 @@ class LogGraphCoreTests(unittest.TestCase):
             lint_payload = json.loads(stdout.getvalue())
             self.assertIn("cleanup_patch", lint_payload)
             cleanup_patch = root / "cleanup.json"
-            cleanup_patch.write_text(json.dumps({"remove_session_keys": ["deliveryId"], "review_sequences": {"delivery_success": ["pcb_result"]}}), encoding="utf-8")
+            cleanup_patch.write_text(json.dumps({"remove_session_keys": ["deliveryId"], "review_session_keys": ["traceId"], "review_sequences": {"delivery_success": ["pcb_result"]}}), encoding="utf-8")
             stdout = io.StringIO()
             with redirect_stdout(stdout):
                 rc = cli_main(["profile", "cleanup", str(root), "--patch", str(cleanup_patch), "--dry-run"])
@@ -397,6 +399,14 @@ class LogGraphCoreTests(unittest.TestCase):
         )
         self.assertEqual(profile["exclude_paths"], ["**/build/**", "third_party"])
         self.assertEqual(profile["entities"]["pcb"]["aliases"], ["pcb", "主控"])
+
+    def test_merge_manual_profiles_merges_entities_aliases(self):
+        merged = merge_manual_profiles(
+            {"entities": {"pcb": {"aliases": ["pcb"]}}},
+            {"entities": {"pcb": {"aliases": ["主控"]}, "belt": {"aliases": ["皮带"]}}},
+        )
+        self.assertEqual(merged["entities"]["pcb"]["aliases"], ["pcb", "主控"])
+        self.assertEqual(merged["entities"]["belt"]["aliases"], ["皮带"])
 
     def test_query_terms_are_profile_driven(self):
         self.assertEqual(query_terms("pcb await"), ["await", "pcb"])

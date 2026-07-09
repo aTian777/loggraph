@@ -82,6 +82,15 @@ def merge_manual_profiles(base: dict[str, Any], patch: dict[str, Any]) -> dict[s
     merged["exclude_paths"] = _unique((base or {}).get("exclude_paths", []) + (patch or {}).get("exclude_paths", []))
     merged["session_keys"] = _unique((base or {}).get("session_keys", []) + (patch or {}).get("session_keys", []))
     merged["states"] = _unique((base or {}).get("states", []) + (patch or {}).get("states", []))
+    entities = dict((base or {}).get("entities") or {})
+    for name, spec in ((patch or {}).get("entities") or {}).items():
+        if isinstance(spec, dict) and isinstance(entities.get(name), dict):
+            merged_spec = dict(entities[name])
+            merged_spec["aliases"] = _unique((entities[name].get("aliases") or []) + (spec.get("aliases") or []))
+            entities[name] = merged_spec
+        else:
+            entities[name] = spec
+    merged["entities"] = entities
     events = dict((base or {}).get("events") or {})
     events.update((patch or {}).get("events") or {})
     merged["events"] = events
