@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from fnmatch import fnmatch
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from loggraph.event_profile import build_event_profile
@@ -14,7 +15,7 @@ from loggraph.parsers.c_cpp_regex import CppRegexParser
 
 
 class Indexer:
-    def __init__(self, max_workers: int | None = None, incremental: bool = True) -> None:
+    def __init__(self, max_workers: int | None = None, incremental: bool = True, exclude_paths: list[str] | None = None) -> None:
         self.parsers = {
             ".py": PythonAstParser(),
             ".kt": KotlinRegexParser(),
@@ -33,6 +34,7 @@ class Indexer:
         }
         self.max_workers = max_workers
         self.incremental = incremental
+        self.exclude_paths = exclude_paths or []
 
     def build(self, root: str | Path, existing_index: CodeIndex = None, progress: Callable[[dict], None] | None = None) -> CodeIndex:
         """Build code index with optional parallel processing and incremental updates."""
@@ -146,6 +148,14 @@ class Indexer:
         ]
 
     def _skip(self, path: Path) -> bool:
+        path_text = path.as_posix()
+        for pattern in self.exclude_paths:
+            normalized = pattern.replace("\\", "/")
+            if fnmatch(path_text, normalized) or fnmatch(path_text, f"*{normalized}") or fnmatch(path.name, normalized):
+                return True
+            literal = normalized.replace("**/", "").replace("/**", "").replace("*", "")
+            if literal and literal in path_text:
+                return True
         parts = {part.lower() for part in path.parts}
         skip_dirs = {
             ".git", "__pycache__", ".venv", "venv", "node_modules", ".gradle",

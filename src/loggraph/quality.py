@@ -7,7 +7,7 @@ from typing import Any
 from loggraph.analyzer import analyze_log
 from loggraph.graph.store import load_index
 from loggraph.logs.templates import normalize_text
-from loggraph.profile import render_profile_suggestion
+from loggraph.profile import default_profile_path, load_project_profile, render_profile_suggestion
 
 SESSION_KEY_PATTERN = re.compile(r"\b(?:traceId|requestId|reqId|deliveryId|orderId|taskId|sessionId|sid|uuid|sn)\b\s*[=:]|\{[^}]*id[^}]*\}|%[sd]", re.I)
 DURATION_PATTERN = re.compile(r"\b(duration|elapsed|cost|took|耗时)\b", re.I)
@@ -15,6 +15,76 @@ STATE_PATTERN = re.compile(r"\b(state|status)\b|状态|Await|Pending|Success|Fai
 ERROR_DETAIL_PATTERN = re.compile(r"\b(exception|throwable|errorCode|code|reason|cause|stack)\b|异常|原因|错误码", re.I)
 LITERAL_WORD_PATTERN = re.compile(r"[A-Za-z\u4e00-\u9fff]{3,}")
 PLACEHOLDER_PATTERN = re.compile(r"%\w|\{[^}]*\}|\b\d+\b|0x[0-9a-f]+|[0-9a-f]{8,}", re.I)
+
+
+def suggest_app_identifiers(project: str | Path) -> list[str]:
+    root = Path(project)
+    candidates: list[str] = []
+    for gradle in list(root.glob("*/build.gradle")) + list(root.glob("*/build.gradle.kts")):
+        text = gradle.read_text(encoding="utf-8", errors="ignore")
+        for pattern in [r"namespace\s*[= ]\s*[\"']([^\"']+)[\"']", r"applicationId\s*[= ]\s*[\"']([^\"']+)[\"']"]:
+            for match in re.findall(pattern, text):
+                if match not in candidates:
+                    candidates.append(match)
+    manifest = root / "app" / "src" / "main" / "AndroidManifest.xml"
+    if manifest.exists():
+        text = manifest.read_text(encoding="utf-8", errors="ignore")
+        for match in re.findall(r"package=[\"']([^\"']+)[\"']", text):
+            if match not in candidates:
+                candidates.append(match)
+    return candidates
+
+
+def doctor_project(project: str | Path, index_path: str | Path) -> dict[str, Any]:
+    project_path = Path(project)
+    index = Path(index_path)
+    profile = load_project_profile(project_path)
+    status = {
+        "project": str(project_path.resolve()),
+        "index": str(index),
+        "index_exists": index.exists(),
+        "profile": str(default_profile_path(project_path)),
+        "profile_exists": default_profile_path(project_path).exists(),
+        "app_identifiers": profile.get("app_identifiers", []),
+        "exclude_paths": profile.get("exclude_paths", []),
+        "suggested_app_identifiers": suggest_app_identifiers(project_path),
+        "recommended_next": [],
+    }
+    if not status["index_exists"]:
+        status["recommended_next"].append("loggraph init <project>")
+    if not status["profile_exists"]:
+        status["recommended_next"].append("loggraph profile init <project>")
+    if not status["app_identifiers"] and status["suggested_app_identifiers"]:
+        status["recommended_next"].append("add app_identifiers to .loggraph/profile.yaml")
+    if status["index_exists"]:
+        idx = load_index(index)
+        status["functions"] = len(idx.functions)
+        status["log_sites"] = len(idx.log_sites)
+        status["learned_patterns"] = len(idx.metadata.get("event_profile", {}).get("learned_patterns", []))
+        status["recommended_next"].append("loggraph audit <project>")
+    return status
+
+
+def render_doctor_report(status: dict[str, Any]) -> str:
+    lines = [
+        "# LogGraph Doctor",
+        "",
+        f"Project: `{status['project']}`",
+        f"Index exists: {status['index_exists']} (`{status['index']}`)",
+        f"Profile exists: {status['profile_exists']} (`{status['profile']}`)",
+        f"App identifiers: {', '.join(status.get('app_identifiers') or []) or 'none'}",
+        f"Suggested app identifiers: {', '.join(status.get('suggested_app_identifiers') or []) or 'none'}",
+        f"Exclude paths: {', '.join(status.get('exclude_paths') or []) or 'none'}",
+    ]
+    if status.get("index_exists"):
+        lines.extend([
+            f"Functions: {status.get('functions', 0)}",
+            f"Log sites: {status.get('log_sites', 0)}",
+            f"Learned patterns: {status.get('learned_patterns', 0)}",
+        ])
+    lines.extend(["", "## Recommended next"])
+    lines.extend([f"- {item}" for item in status.get("recommended_next", [])] or ["- No immediate action."])
+    return "\n".join(lines)
 
 
 def audit_index(index_path: str | Path) -> dict[str, Any]:

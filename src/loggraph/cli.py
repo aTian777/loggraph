@@ -13,7 +13,7 @@ from loggraph.graph.render import render
 from loggraph.evaluation.runner import evaluate
 from loggraph.analyzer import analyze_log, compare_logs, compact_summary, default_index_path, write_analysis
 from loggraph.profile import default_profile_path, load_project_profile, merge_manual_profiles, parse_simple_yaml, render_manual_profile, render_profile_suggestion
-from loggraph.quality import audit_index, refine_profile, render_audit_report, sequence_from_log
+from loggraph.quality import audit_index, doctor_project, refine_profile, render_audit_report, render_doctor_report, sequence_from_log, suggest_app_identifiers
 
 
 def cmd_index(args):
@@ -39,7 +39,8 @@ def cmd_init(args):
         if args.progress_jsonl:
             print(json.dumps(event, ensure_ascii=False), file=sys.stderr, flush=True)
 
-    indexer = Indexer(max_workers=args.workers, incremental=not args.no_incremental)
+    project_profile = load_project_profile(args.project)
+    indexer = Indexer(max_workers=args.workers, incremental=not args.no_incremental, exclude_paths=project_profile.get("exclude_paths", []))
     idx = indexer.build(src, existing_index=existing_index, progress=emit_progress if args.progress_jsonl else None)
     if args.progress_jsonl:
         print(json.dumps({"phase": "write_cache", "path": str(out), "message": "Writing index cache"}, ensure_ascii=False), file=sys.stderr, flush=True)
@@ -99,7 +100,9 @@ def cmd_analyze(args):
 def cmd_profile_suggest(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
     idx = load_index(index_path)
-    text = render_profile_suggestion(idx.metadata.get("event_profile", {}))
+    profile = dict(idx.metadata.get("event_profile", {}))
+    profile.setdefault("app_identifiers", suggest_app_identifiers(args.project))
+    text = render_profile_suggestion(profile)
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(text, encoding="utf-8")
@@ -157,6 +160,15 @@ def cmd_audit(args):
     report["report_markdown"] = render_audit_report(report)
     if args.format == "markdown":
         print(report["report_markdown"])
+    else:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+
+
+def cmd_doctor(args):
+    index_path = Path(args.index) if args.index else default_index_path(args.project)
+    report = doctor_project(args.project, index_path)
+    if args.format == "markdown":
+        print(render_doctor_report(report))
     else:
         print(json.dumps(report, ensure_ascii=False, indent=2))
 
@@ -291,6 +303,11 @@ def build_parser():
     s.add_argument("--index", help="Index cache path. Defaults to <project>/.loggraph/index.json.")
     s.add_argument("--format", choices=["json", "markdown"], default="markdown")
     s.set_defaults(func=cmd_audit)
+    s = sub.add_parser("doctor")
+    s.add_argument("project")
+    s.add_argument("--index", help="Index cache path. Defaults to <project>/.loggraph/index.json.")
+    s.add_argument("--format", choices=["json", "markdown"], default="markdown")
+    s.set_defaults(func=cmd_doctor)
     s = sub.add_parser("compare")
     s.add_argument("project")
     s.add_argument("--baseline", required=True, help="Successful/baseline log file.")

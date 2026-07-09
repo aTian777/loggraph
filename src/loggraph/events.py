@@ -212,10 +212,16 @@ def _event_type(entry: LogEntry, text: str, profile: dict[str, Any] | None = Non
     if entry.exception_type:
         return "exception"
     level = (entry.level or "").upper()
+    normalized = normalize_text(text).lower()
+    for item in (profile or {}).get("learned_patterns", []):
+        if item.get("source") != "manual_profile":
+            continue
+        pattern = str(item.get("pattern") or "").lower()
+        if pattern and pattern in normalized:
+            return str(item.get("type") or f"project:{pattern}")
     for event_type, pattern in EVENT_RULES:
         if pattern.search(text):
             return event_type
-    normalized = normalize_text(text).lower()
     for item in (profile or {}).get("learned_patterns", []):
         pattern = str(item.get("pattern") or "").lower()
         if pattern and pattern in normalized:

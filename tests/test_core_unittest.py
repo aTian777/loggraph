@@ -11,6 +11,7 @@ from loggraph.logs.parser import parse_log_block, parse_log_text
 from loggraph.logs.templates import template_matches, similarity, template_to_regex
 from loggraph.models import LogSite
 from loggraph.matchers.locator import Locator
+from loggraph.profile import parse_simple_yaml
 from loggraph.evaluation.runner import evaluate
 from loggraph.graph.render import render_dot
 
@@ -192,6 +193,8 @@ class LogGraphCoreTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            (root / "app").mkdir(exist_ok=True)
+            (root / "app" / "build.gradle").write_text('android { namespace "com.example.app" }', encoding="utf-8")
             stdout = io.StringIO()
             stderr = io.StringIO()
             from contextlib import redirect_stderr
@@ -251,6 +254,8 @@ class LogGraphCoreTests(unittest.TestCase):
             with redirect_stdout(stdout):
                 rc = cli_main(["profile", "suggest", str(root), "--index", str(out)])
             self.assertEqual(rc, 0)
+            self.assertIn("app_identifiers:", stdout.getvalue())
+            self.assertIn("com.example.app", stdout.getvalue())
             self.assertIn("session_keys:", stdout.getvalue())
 
             generated_profile = root / ".loggraph" / "generated-profile.yaml"
@@ -274,7 +279,7 @@ class LogGraphCoreTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn("Missing in target", stdout.getvalue())
             self.assertIn("Duration anomalies", stdout.getvalue())
-            self.assertIn("Target timed out before completing baseline path", stdout.getvalue())
+            self.assertIn("Target duration regression", stdout.getvalue())
             self.assertIn("pcb_result", stdout.getvalue())
 
             stdout = io.StringIO()
@@ -282,6 +287,12 @@ class LogGraphCoreTests(unittest.TestCase):
                 rc = cli_main(["audit", str(root), "--index", str(out)])
             self.assertEqual(rc, 0)
             self.assertIn("Logging Quality Audit", stdout.getvalue())
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["doctor", str(root), "--index", str(out)])
+            self.assertEqual(rc, 0)
+            self.assertIn("LogGraph Doctor", stdout.getvalue())
 
             patch_file = root / "patch.yaml"
             stdout = io.StringIO()
@@ -311,6 +322,22 @@ class LogGraphCoreTests(unittest.TestCase):
             with redirect_stdout(stdout):
                 rc = cli_main(["compare", str(root), "--baseline", str(baseline), "--target", str(target), "--index", str(out), "--all-lines", "--fail-on-regression"])
             self.assertEqual(rc, 1)
+
+    def test_profile_yaml_preserves_multiple_list_items(self):
+        profile = parse_simple_yaml(
+            "app_identifiers:\n"
+            "  - com.example.app\n"
+            "exclude_paths:\n"
+            "  - '**/build/**'\n"
+            "  - third_party\n"
+            "entities:\n"
+            "  pcb:\n"
+            "    aliases:\n"
+            "      - pcb\n"
+            "      - 主控\n"
+        )
+        self.assertEqual(profile["exclude_paths"], ["**/build/**", "third_party"])
+        self.assertEqual(profile["entities"]["pcb"]["aliases"], ["pcb", "主控"])
 
     def test_query_terms_are_profile_driven(self):
         self.assertEqual(query_terms("pcb await"), ["await", "pcb"])

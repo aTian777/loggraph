@@ -40,6 +40,7 @@ def merge_profiles(learned: dict[str, Any] | None, manual: dict[str, Any] | None
     merged["session_keys"] = _unique((manual.get("session_keys") or []) + (learned.get("session_keys") or []))
     merged["states"] = _unique((manual.get("states") or []) + (learned.get("states") or []))
     merged["app_identifiers"] = _unique((manual.get("app_identifiers") or []) + (learned.get("app_identifiers") or []))
+    merged["exclude_paths"] = _unique((manual.get("exclude_paths") or []) + (learned.get("exclude_paths") or []))
     merged["expected_sequences"] = manual.get("expected_sequences") or {}
     merged["entities"] = manual.get("entities") or {}
     merged["manual_events"] = manual.get("events") or {}
@@ -50,6 +51,9 @@ def merge_profiles(learned: dict[str, Any] | None, manual: dict[str, Any] | None
 def render_profile_suggestion(profile: dict[str, Any]) -> str:
     lines = ["# .loggraph/profile.yaml suggestion", "", "app_identifiers:"]
     for item in profile.get("app_identifiers", [])[:20]:
+        lines.append(f"  - {item}")
+    lines.extend(["", "exclude_paths:"])
+    for item in profile.get("exclude_paths", [])[:40]:
         lines.append(f"  - {item}")
     lines.extend(["", "session_keys:"]) 
     for key in profile.get("session_keys", [])[:20]:
@@ -75,6 +79,7 @@ def render_profile_suggestion(profile: dict[str, Any]) -> str:
 def merge_manual_profiles(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base or {})
     merged["app_identifiers"] = _unique((base or {}).get("app_identifiers", []) + (patch or {}).get("app_identifiers", []))
+    merged["exclude_paths"] = _unique((base or {}).get("exclude_paths", []) + (patch or {}).get("exclude_paths", []))
     merged["session_keys"] = _unique((base or {}).get("session_keys", []) + (patch or {}).get("session_keys", []))
     merged["states"] = _unique((base or {}).get("states", []) + (patch or {}).get("states", []))
     events = dict((base or {}).get("events") or {})
@@ -89,6 +94,9 @@ def merge_manual_profiles(base: dict[str, Any], patch: dict[str, Any]) -> dict[s
 def render_manual_profile(profile: dict[str, Any]) -> str:
     lines = ["app_identifiers:"]
     for item in profile.get("app_identifiers", []):
+        lines.append(f"  - {item}")
+    lines.extend(["", "exclude_paths:"])
+    for item in profile.get("exclude_paths", []):
         lines.append(f"  - {item}")
     lines.extend(["", "session_keys:"])
     for key in profile.get("session_keys", []):
@@ -136,7 +144,9 @@ def parse_simple_yaml(text: str) -> dict[str, Any]:
             else:
                 owner, key = last_key_at_indent.get(indent - 2, (None, ""))
                 if isinstance(owner, dict) and key:
-                    owner[key] = [value]
+                    if not isinstance(owner.get(key), list):
+                        owner[key] = []
+                    owner[key].append(value)
                     stack.append((indent, owner[key]))
             continue
         key, sep, rest = line.partition(":")
