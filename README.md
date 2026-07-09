@@ -92,10 +92,13 @@ loggraph profile init .
 loggraph profile refine . --log-file failed.log --all-lines
 loggraph profile refine . --log-file failed.log --all-lines --apply
 loggraph profile lint . --log-file failed.log --query "pcb await" --all-lines --fix-suggest
+loggraph profile lint . --log-file failed.log --query "pcb await" --all-lines --fix-suggest --format json
 loggraph profile lint . --strict
 loggraph profile apply . --patch patch.yaml --force
 loggraph profile sequence . --from-log success.log --name delivery_success --all-lines
 ```
+
+`profile lint --fix-suggest` can include a review-only `cleanup_patch` with deletion candidates such as unused session keys, events to review, and sequence items to inspect. LogGraph does not apply cleanup deletions automatically.
 
 Profiles live at `.loggraph/profile.yaml` and let each project define its own session keys, event patterns, and expected sequences:
 

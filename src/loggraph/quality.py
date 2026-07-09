@@ -221,6 +221,20 @@ def render_profile_lint_report(report: dict[str, Any]) -> str:
         for item in report["fix_suggestions"]:
             target = f" `{item.get('target')}`" if item.get("target") else ""
             lines.append(f"- **{item.get('action')}**{target}: {item.get('reason')}")
+    cleanup_patch = report.get("cleanup_patch") or {}
+    if cleanup_patch:
+        lines.extend(["", "## Cleanup patch preview"])
+        for key, values in cleanup_patch.items():
+            if not values:
+                continue
+            lines.append(f"- `{key}`:")
+            if isinstance(values, list):
+                for value in values:
+                    lines.append(f"  - `{value}`")
+            elif isinstance(values, dict):
+                for name, items in values.items():
+                    lines.append(f"  - `{name}`: {', '.join(str(item) for item in items)}")
+        lines.append("- This is a review-only cleanup patch; LogGraph does not apply deletions automatically.")
     return "\n".join(lines)
 
 
@@ -242,6 +256,7 @@ def _profile_lint_payload(project: Path, profile_path: Path, problems: list[dict
         "problems": unique_problems,
         "suggestions": _dedupe_strings(suggestions),
         "fix_suggestions": generate_profile_fix_suggestions(unique_problems, event_match_counts, session_key_counts) if fix_suggest else [],
+        "cleanup_patch": generate_cleanup_patch(unique_problems, event_match_counts) if fix_suggest else {},
         "event_match_counts": event_match_counts,
         "session_key_counts": session_key_counts,
         "profile_warnings": profile_warnings,
@@ -283,6 +298,49 @@ def generate_profile_fix_suggestions(problems: list[dict[str, Any]], event_match
     return _dedupe_fix_suggestions(fixes)
 
 
+def generate_cleanup_patch(problems: list[dict[str, Any]], event_match_counts: dict[str, int]) -> dict[str, Any]:
+    """Build a conservative, review-only deletion patch from lint findings.
+
+    The patch is intentionally structural JSON, not a YAML diff, because LogGraph's
+    profile merge path is additive. A future cleanup apply command can consume this
+    after explicit user review.
+    """
+    remove_session_keys: list[str] = []
+    review_events: list[str] = []
+    remove_events: list[str] = []
+    review_sequences: dict[str, list[str]] = {}
+    for problem in problems:
+        problem_type = str(problem.get("type", ""))
+        message = str(problem.get("message", ""))
+        values = re.findall(r"`([^`]+)`", message)
+        if problem_type == "suspicious_session_key" and values:
+            remove_session_keys.append(values[0])
+        elif problem_type == "unused_session_key" and values:
+            # Unused in one log slice is not enough for automatic deletion; mark review-only.
+            remove_session_keys.append(values[0])
+        elif problem_type == "unmatched_event" and values:
+            event = values[0]
+            if event_match_counts.get(event, 0) == 0:
+                review_events.append(event)
+        elif problem_type in {"empty_event", "invalid_event"} and values:
+            remove_events.append(values[0])
+        elif problem_type == "sequence_session_mismatch" and values:
+            sequence = str(problem.get("sequence") or "__unknown_sequence__")
+            review_sequences.setdefault(sequence, []).append(values[0])
+        elif problem_type == "undefined_sequence_event" and len(values) >= 2:
+            review_sequences.setdefault(values[0], []).append(values[1])
+    patch: dict[str, Any] = {}
+    if remove_session_keys:
+        patch["remove_session_keys"] = _dedupe_strings(remove_session_keys)
+    if remove_events:
+        patch["remove_events"] = _dedupe_strings(remove_events)
+    if review_events:
+        patch["review_events"] = _dedupe_strings(review_events)
+    if review_sequences:
+        patch["review_sequences"] = {name: _dedupe_strings(items) for name, items in review_sequences.items()}
+    return patch
+
+
 def _extract_backtick_value(message: str) -> str:
     match = re.search(r"`([^`]+)`", message)
     return match.group(1) if match else ""
@@ -310,9 +368,10 @@ def _normalize_profile_warning(warning: dict[str, Any], event_match_counts: dict
             return {
                 "severity": "warning",
                 "type": "sequence_session_mismatch",
+                "sequence": warning.get("sequence", ""),
                 "message": f"Expected sequence references `{label}`, and its patterns match the log, but it was not observed in the same session/timeline. The sequence may be over-broad or use mismatched correlation keys.",
             }
-    return {"severity": "warning", "type": warning_type, "message": message}
+    return {"severity": "warning", "type": warning_type, "sequence": warning.get("sequence", ""), "message": message}
 
 
 def _filter_text_for_query(text: str, query: str) -> str:

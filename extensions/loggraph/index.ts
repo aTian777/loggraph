@@ -470,7 +470,8 @@ export default function (pi: ExtensionAPI) {
                 type: "text",
                 text: [
                   "Explain this LogGraph profile lint report in Chinese.",
-                  "Summarize: 1) which profile rules are risky/noisy, 2) which warnings are only informational, 3) what concrete profile edits you recommend, 4) whether the Suggested cleanup items are safe to apply manually, 5) whether the user should run refine/suggest again.",
+                  "Summarize: 1) which profile rules are risky/noisy, 2) which warnings are only informational, 3) what concrete profile edits you recommend, 4) whether the Suggested cleanup / cleanup_patch deletion items are safe to apply manually, 5) whether the user should run refine/suggest again.",
+                  "Do not apply cleanup_patch automatically; it is a review-only deletion plan until the user explicitly approves a future cleanup/apply flow.",
                   `Project: ${ctx.cwd}`,
                   `Log file: ${reviewLogFile || "(none)"}`,
                   `Focus query: ${reviewQuery || "(none)"}`,

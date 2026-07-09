@@ -331,6 +331,12 @@ class LogGraphCoreTests(unittest.TestCase):
 
             stdout = io.StringIO()
             with redirect_stdout(stdout):
+                rc = cli_main(["profile", "lint", str(root), "--log-file", str(target), "--index", str(out), "--all-lines", "--fix-suggest", "--format", "json"])
+            self.assertEqual(rc, 0)
+            self.assertIn("cleanup_patch", json.loads(stdout.getvalue()))
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
                 rc = cli_main(["profile", "lint", str(root), "--log-file", str(target), "--index", str(out), "--all-lines", "--strict"])
             self.assertEqual(rc, 1)
 
