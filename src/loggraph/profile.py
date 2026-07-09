@@ -104,6 +104,14 @@ def render_manual_profile(profile: dict[str, Any]) -> str:
     lines.extend(["", "states:"])
     for state in profile.get("states", []):
         lines.append(f"  - {state}")
+    lines.extend(["", "entities:"])
+    for name, spec in (profile.get("entities") or {}).items():
+        lines.append(f"  {name}:")
+        aliases = spec.get("aliases", []) if isinstance(spec, dict) else []
+        if aliases:
+            lines.append("    aliases:")
+            for alias in aliases:
+                lines.append(f"      - {alias}")
     lines.extend(["", "events:"])
     for name, spec in (profile.get("events") or {}).items():
         lines.append(f"  {name}:")

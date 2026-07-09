@@ -333,7 +333,21 @@ class LogGraphCoreTests(unittest.TestCase):
             with redirect_stdout(stdout):
                 rc = cli_main(["profile", "lint", str(root), "--log-file", str(target), "--index", str(out), "--all-lines", "--fix-suggest", "--format", "json"])
             self.assertEqual(rc, 0)
-            self.assertIn("cleanup_patch", json.loads(stdout.getvalue()))
+            lint_payload = json.loads(stdout.getvalue())
+            self.assertIn("cleanup_patch", lint_payload)
+            cleanup_patch = root / "cleanup.json"
+            cleanup_patch.write_text(json.dumps({"remove_session_keys": ["deliveryId"], "review_sequences": {"delivery_success": ["pcb_result"]}}), encoding="utf-8")
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["profile", "cleanup", str(root), "--patch", str(cleanup_patch), "--dry-run"])
+            self.assertEqual(rc, 0)
+            self.assertIn("Dry run", stdout.getvalue())
+            self.assertIn("deliveryId", (root / ".loggraph" / "profile.yaml").read_text(encoding="utf-8"))
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["profile", "cleanup", str(root), "--patch", str(cleanup_patch), "--apply"])
+            self.assertEqual(rc, 0)
+            self.assertNotIn("  - deliveryId", (root / ".loggraph" / "profile.yaml").read_text(encoding="utf-8"))
 
             stdout = io.StringIO()
             with redirect_stdout(stdout):

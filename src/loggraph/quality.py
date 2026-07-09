@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -417,6 +418,88 @@ def _dedupe_strings(items: list[str]) -> list[str]:
             seen.add(item)
             unique.append(item)
     return unique
+
+
+def load_cleanup_patch(path: str | Path) -> dict[str, Any]:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(data, dict) and isinstance(data.get("cleanup_patch"), dict):
+        return data["cleanup_patch"]
+    return data if isinstance(data, dict) else {}
+
+
+def cleanup_profile(project: str | Path, patch: dict[str, Any], *, apply: bool = False) -> dict[str, Any]:
+    project_path = Path(project)
+    profile_path = default_profile_path(project_path)
+    profile = load_project_profile(project_path)
+    remove_session_keys = [str(item) for item in patch.get("remove_session_keys") or []]
+    remove_events = [str(item) for item in patch.get("remove_events") or []]
+    review_events = [str(item) for item in patch.get("review_events") or []]
+    review_sequences = patch.get("review_sequences") or {}
+
+    before = {
+        "session_keys": list(profile.get("session_keys") or []),
+        "events": sorted((profile.get("events") or {}).keys()),
+    }
+    updated = dict(profile)
+    updated["session_keys"] = [key for key in (profile.get("session_keys") or []) if str(key) not in set(remove_session_keys)]
+    events = dict(profile.get("events") or {})
+    for name in remove_events:
+        events.pop(name, None)
+    updated["events"] = events
+    after = {
+        "session_keys": list(updated.get("session_keys") or []),
+        "events": sorted((updated.get("events") or {}).keys()),
+    }
+    applied = False
+    if apply:
+        from loggraph.profile import render_manual_profile
+        profile_path.parent.mkdir(parents=True, exist_ok=True)
+        profile_path.write_text(render_manual_profile(updated), encoding="utf-8")
+        applied = True
+    return {
+        "project": str(project_path.resolve()),
+        "profile": str(profile_path),
+        "applied": applied,
+        "removed": {
+            "session_keys": [key for key in before["session_keys"] if key not in after["session_keys"]],
+            "events": [name for name in before["events"] if name not in after["events"]],
+        },
+        "review_only": {
+            "events": review_events,
+            "sequences": review_sequences,
+        },
+        "before": before,
+        "after": after,
+    }
+
+
+def render_cleanup_report(report: dict[str, Any]) -> str:
+    mode = "Applied" if report.get("applied") else "Dry run"
+    lines = [
+        "# LogGraph Profile Cleanup",
+        "",
+        f"Mode: {mode}",
+        f"Profile: `{report.get('profile')}`",
+        "",
+        "## Safe removals",
+    ]
+    removed = report.get("removed", {})
+    lines.append("### Session keys")
+    lines.extend([f"- `{item}`" for item in removed.get("session_keys", [])] or ["- none"])
+    lines.append("### Events")
+    lines.extend([f"- `{item}`" for item in removed.get("events", [])] or ["- none"])
+    review = report.get("review_only", {})
+    if review.get("events") or review.get("sequences"):
+        lines.extend(["", "## Review-only items"])
+        if review.get("events"):
+            lines.append("### Events to review")
+            lines.extend([f"- `{item}`" for item in review.get("events", [])])
+        if review.get("sequences"):
+            lines.append("### Sequences to review")
+            for name, items in review.get("sequences", {}).items():
+                lines.append(f"- `{name}`: {', '.join(str(item) for item in items)}")
+        lines.append("These were not modified automatically.")
+    return "\n".join(lines)
 
 
 def audit_index(index_path: str | Path) -> dict[str, Any]:

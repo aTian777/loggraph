@@ -13,7 +13,7 @@ from loggraph.graph.render import render
 from loggraph.evaluation.runner import evaluate
 from loggraph.analyzer import analyze_log, compare_logs, compact_summary, default_index_path, write_analysis
 from loggraph.profile import default_profile_path, load_project_profile, merge_manual_profiles, parse_simple_yaml, render_manual_profile, render_profile_suggestion
-from loggraph.quality import audit_index, doctor_project, lint_profile, refine_profile, render_audit_report, render_doctor_report, render_profile_lint_report, sequence_from_log, suggest_app_identifiers
+from loggraph.quality import audit_index, cleanup_profile, doctor_project, lint_profile, load_cleanup_patch, refine_profile, render_audit_report, render_cleanup_report, render_doctor_report, render_profile_lint_report, sequence_from_log, suggest_app_identifiers
 
 
 def cmd_index(args):
@@ -206,6 +206,15 @@ def cmd_profile_lint(args):
         return 1
 
 
+def cmd_profile_cleanup(args):
+    patch = load_cleanup_patch(args.patch)
+    report = cleanup_profile(args.project, patch, apply=args.apply)
+    if args.format == "markdown":
+        print(render_cleanup_report(report))
+    else:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+
+
 def cmd_audit(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
     report = audit_index(index_path)
@@ -361,6 +370,14 @@ def build_parser():
     pl.add_argument("--strict", action="store_true", help="Exit 1 when warnings or errors are found; info-level findings do not fail.")
     pl.add_argument("--format", choices=["json", "markdown"], default="markdown")
     pl.set_defaults(func=cmd_profile_lint)
+    pc = profile_sub.add_parser("cleanup")
+    pc.add_argument("project")
+    pc.add_argument("--patch", required=True, help="JSON cleanup patch or full profile lint JSON containing cleanup_patch.")
+    mode = pc.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="Preview cleanup changes without writing. Default.")
+    mode.add_argument("--apply", action="store_true", help="Apply safe cleanup removals. Review-only items are not modified.")
+    pc.add_argument("--format", choices=["json", "markdown"], default="markdown")
+    pc.set_defaults(func=cmd_profile_cleanup)
     pa = profile_sub.add_parser("apply")
     pa.add_argument("project")
     pa.add_argument("--patch", required=True, help="YAML patch file to merge into .loggraph/profile.yaml.")

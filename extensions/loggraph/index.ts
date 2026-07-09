@@ -433,6 +433,14 @@ export default function (pi: ExtensionAPI) {
           }
           if (wantsFixSuggest) cliArgs.push("--fix-suggest");
           if (wantsStrict) cliArgs.push("--strict");
+        } else if (sub === "cleanup") {
+          const patchFile = resolveExistingFilePrefix(ctx.cwd, rest);
+          if (!patchFile) {
+            ctx.ui.notify("Usage: /loggraph profile cleanup <cleanup.json> [apply]", "error");
+            return;
+          }
+          const wantsApply = rest.slice(patchFile.used).some((word) => ["apply", "应用", "确认"].includes(word.toLowerCase()));
+          cliArgs.push("--patch", patchFile.file, wantsApply ? "--apply" : "--dry-run");
         } else if (sub === "apply") {
           const patchFile = resolveExistingFilePrefix(ctx.cwd, rest);
           if (!patchFile) {
@@ -463,6 +471,8 @@ export default function (pi: ExtensionAPI) {
                 ].join("\n"),
               },
             ]);
+          } else if (sub === "cleanup") {
+            ctx.ui.notify(stdout, "info");
           } else if (sub === "lint") {
             ctx.ui.notify("Routing LogGraph profile lint to the agent...", "info");
             pi.sendUserMessage([

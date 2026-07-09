@@ -93,14 +93,16 @@ loggraph profile refine . --log-file failed.log --all-lines
 loggraph profile refine . --log-file failed.log --all-lines --apply
 loggraph profile lint . --log-file failed.log --query "pcb await" --all-lines --fix-suggest
 loggraph profile lint . --log-file failed.log --query "pcb await" --all-lines --fix-suggest --format json
+loggraph profile cleanup . --patch cleanup.json --dry-run
+loggraph profile cleanup . --patch cleanup.json --apply
 loggraph profile lint . --strict
 loggraph profile apply . --patch patch.yaml --force
 loggraph profile sequence . --from-log success.log --name delivery_success --all-lines
 ```
 
-`profile lint --fix-suggest` can include a review-only `cleanup_patch` with deletion candidates such as unused session keys, events to review, and sequence items to inspect. LogGraph does not apply cleanup deletions automatically.
+`profile lint --fix-suggest` can include a review-only `cleanup_patch` with deletion candidates such as unused session keys, events to review, and sequence items to inspect. `profile cleanup --apply` only applies the safe subset (`remove_session_keys` and `remove_events`); sequence changes remain review-only.
 
-Profiles live at `.loggraph/profile.yaml` and let each project define its own session keys, event patterns, and expected sequences:
+Profiles live at `.loggraph/profile.yaml` and let each project define its own session keys, entities, event patterns, and expected sequences:
 
 ```yaml
 session_keys:
@@ -138,6 +140,8 @@ Inside Pi, `/loggraph` supports common workflows:
 /loggraph profile suggest failed.log pcb await
 /loggraph profile lint failed.log pcb await fix
 /loggraph profile lint failed.log pcb await strict
+/loggraph profile cleanup cleanup.json
+/loggraph profile cleanup cleanup.json apply
 /loggraph profile sequence success.log delivery
 ```
 
