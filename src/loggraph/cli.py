@@ -97,6 +97,43 @@ def cmd_analyze(args):
         print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
+def cmd_explain(args):
+    index_path = Path(args.index) if args.index else default_index_path(args.project)
+    report = analyze_log(index_path, args.log_file, top=args.top, app_only=not args.all_lines, project=args.project, context=args.context, source_context=args.source_context, detail="normal", query=args.query or "")
+    payload = {
+        "diagnosis": report.get("diagnosis", {}),
+        "evidence_trace": report.get("evidence_trace", []),
+        "profile_warnings": report.get("profile_warnings", []),
+        "query_focus": report.get("query_focus", {}),
+    }
+    if args.format == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    print("# LogGraph Explanation\n")
+    diagnosis = payload["diagnosis"]
+    if diagnosis.get("summary"):
+        print(f"## Diagnosis\n- {diagnosis['summary']}")
+    if diagnosis.get("findings"):
+        print("\n## Findings")
+        for item in diagnosis["findings"]:
+            print(f"- {item}")
+    if payload["evidence_trace"]:
+        print("\n## Evidence trace")
+        for idx, step in enumerate(payload["evidence_trace"], 1):
+            suffix = f" — {step.get('detail')}" if step.get("detail") else ""
+            print(f"{idx}. {step.get('label')}{suffix}")
+            if step.get("source"):
+                print(f"   - source: `{step['source']}`")
+            if step.get("line"):
+                print(f"   - log line: {step['line']}")
+    if payload["profile_warnings"]:
+        print("\n## Profile warnings")
+        for warning in payload["profile_warnings"]:
+            print(f"- {warning.get('message', '')}")
+            if warning.get("suggestion"):
+                print(f"  - suggestion: {warning['suggestion']}")
+
+
 def cmd_profile_suggest(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
     if args.from_log:
@@ -266,6 +303,17 @@ def build_parser():
     s.add_argument("--detail", choices=["brief", "normal", "full"], default="normal", help="Report detail level.")
     s.add_argument("--query", help="Focus analysis on log entries matching these natural-language terms.")
     s.set_defaults(func=cmd_analyze)
+    s = sub.add_parser("explain")
+    s.add_argument("project")
+    s.add_argument("--log-file", required=True)
+    s.add_argument("--index", help="Index cache path. Defaults to <project>/.loggraph/index.json.")
+    s.add_argument("--top", type=int, default=3)
+    s.add_argument("--all-lines", action="store_true", help="Analyze all log lines instead of app-tag lines only.")
+    s.add_argument("--context", type=int, default=0)
+    s.add_argument("--source-context", type=int, default=3)
+    s.add_argument("--query", help="Focus explanation on log entries matching these natural-language terms.")
+    s.add_argument("--format", choices=["json", "markdown"], default="markdown")
+    s.set_defaults(func=cmd_explain)
     s = sub.add_parser("profile")
     profile_sub = s.add_subparsers(dest="profile_cmd", required=True)
     ps = profile_sub.add_parser("suggest")

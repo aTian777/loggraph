@@ -249,6 +249,15 @@ class LogGraphCoreTests(unittest.TestCase):
             self.assertEqual(payload["runtime_findings"]["missing_events"][0]["missing"], ["pcb_result"])
             self.assertTrue(payload["runtime_findings"]["duration_stats"])
             self.assertTrue(payload["runtime_findings"]["hypotheses"])
+            self.assertIn("diagnosis", payload)
+            self.assertTrue(payload["evidence_trace"])
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["explain", str(root), "--log-file", str(log_file), "--index", str(out), "--all-lines"])
+            self.assertEqual(rc, 0)
+            self.assertIn("LogGraph Explanation", stdout.getvalue())
+            self.assertIn("Evidence trace", stdout.getvalue())
 
             stdout = io.StringIO()
             with redirect_stdout(stdout):

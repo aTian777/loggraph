@@ -57,7 +57,15 @@ loggraph locate /tmp/loggraph-index.json --log-file app.log --top 3
 loggraph analyze . --log-file app.log --format markdown --detail normal --context 3 --source-context 3 --all-lines
 ```
 
-The report includes runtime events, session timelines, duration observations, rule-based hypotheses, source excerpts for likely code locations, missing expected events from `.loggraph/profile.yaml`, context windows around suspicious lines, and likely source areas. Use `--detail brief|normal|full` to control report verbosity.
+The report includes runtime events, session timelines, duration observations, rule-based hypotheses, diagnosis, evidence trace, source excerpts for likely code locations, missing expected events from `.loggraph/profile.yaml`, profile warnings, context windows around suspicious lines, and likely source areas. Use `--detail brief|normal|full` to control report verbosity.
+
+### Explain a focused log question
+
+```bash
+loggraph explain . --log-file app.log --query "pcb await"
+```
+
+This prints a concise diagnosis, evidence trace, and profile warnings without the full analysis report.
 
 ### Compare a successful log with a failed log
 

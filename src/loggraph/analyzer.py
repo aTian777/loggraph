@@ -59,6 +59,10 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
 
     runtime_findings = summarize_events(events, profile=event_profile)
     runtime_findings["hypotheses"] = generate_hypotheses(runtime_findings)
+    query_focus = query_focus_summary(query, query_tokens, events, matches)
+    diagnosis = generate_diagnosis(runtime_findings, matches, query_focus)
+    evidence_trace = build_evidence_trace(runtime_findings, matches, query_focus)
+    profile_warnings = generate_profile_warnings(runtime_findings, event_profile)
     context_windows = build_context_windows(lines, runtime_findings, matches, context=context)
 
     return {
@@ -80,7 +84,10 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
             "states": event_profile.get("states", [])[:10],
         },
         "runtime_findings": runtime_findings,
-        "query_focus": query_focus_summary(query, query_tokens, events, matches),
+        "query_focus": query_focus,
+        "diagnosis": diagnosis,
+        "evidence_trace": evidence_trace,
+        "profile_warnings": profile_warnings,
         "context_windows": context_windows,
         "report_markdown": render_report(
             log_file=str(path),
@@ -88,7 +95,10 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
             analyzed_lines=analyzed_lines,
             matches=matches,
             runtime_findings=runtime_findings,
-            query_focus=query_focus_summary(query, query_tokens, events, matches),
+            query_focus=query_focus,
+            diagnosis=diagnosis,
+            evidence_trace=evidence_trace,
+            profile_warnings=profile_warnings,
             context_windows=context_windows,
             max_matches=top,
             detail=detail,
@@ -170,13 +180,16 @@ def compact_summary(report: dict, *, max_matches: int = 10) -> dict:
         "event_profile_summary": report.get("event_profile_summary", {}),
         "runtime_findings": report.get("runtime_findings", {}),
         "query_focus": report.get("query_focus", {}),
+        "diagnosis": report.get("diagnosis", {}),
+        "evidence_trace": report.get("evidence_trace", []),
+        "profile_warnings": report.get("profile_warnings", []),
         "context_windows": report.get("context_windows", []),
         "domain_findings": report["domain_findings"],
         "report_markdown": report.get("report_markdown", ""),
     }
 
 
-def render_report(*, log_file: str, index_path: str, analyzed_lines: int, matches: list[dict], runtime_findings: dict, query_focus: dict | None = None, context_windows: list[dict] | None = None, max_matches: int = 3, detail: str = "normal") -> str:
+def render_report(*, log_file: str, index_path: str, analyzed_lines: int, matches: list[dict], runtime_findings: dict, query_focus: dict | None = None, diagnosis: dict | None = None, evidence_trace: list[dict] | None = None, profile_warnings: list[dict] | None = None, context_windows: list[dict] | None = None, max_matches: int = 3, detail: str = "normal") -> str:
     lines = [
         "# LogGraph Findings",
         "",
@@ -205,6 +218,27 @@ def render_report(*, log_file: str, index_path: str, analyzed_lines: int, matche
             lines.append(f"- {label}{suffix} — {event.get('message', '')}")
     else:
         lines.append("- No obvious error/exception/timeout/retry events extracted by generic rules.")
+
+    if diagnosis:
+        lines.extend(["", "## Diagnosis"])
+        summary = diagnosis.get("summary")
+        if summary:
+            lines.append(f"- {summary}")
+        for item in diagnosis.get("findings", [])[:5]:
+            lines.append(f"- {item}")
+        if diagnosis.get("missing"):
+            lines.append(f"- Missing expected follow-up: {', '.join(diagnosis['missing'])}")
+
+    if evidence_trace:
+        lines.extend(["", "## Evidence trace"])
+        for idx, step in enumerate(evidence_trace[:8], 1):
+            label = step.get("label", "evidence")
+            detail_text = step.get("detail", "")
+            lines.append(f"{idx}. {label}{f' — {detail_text}' if detail_text else ''}")
+            if step.get("source"):
+                lines.append(f"   - source: `{step['source']}`")
+            if step.get("line"):
+                lines.append(f"   - log line: {step['line']}")
 
     lines.extend(["", "## Likely source areas"])
     source_rows = _top_source_rows(matches, max_rows=max_matches)
@@ -251,6 +285,13 @@ def render_report(*, log_file: str, index_path: str, analyzed_lines: int, matche
             session = item.get("session_id") or "global"
             lines.append(f"- session `{session}` sequence `{item.get('sequence')}` missing: {', '.join(item.get('missing', []))}")
 
+    if profile_warnings:
+        lines.extend(["", "## Profile warnings"])
+        for warning in profile_warnings[:8]:
+            lines.append(f"- {warning.get('message', '')}")
+            if warning.get("suggestion"):
+                lines.append(f"  - suggestion: {warning['suggestion']}")
+
     if detail == "full" and context_windows:
         lines.extend(["", "## Context windows"])
         for window in context_windows[:5]:
@@ -272,6 +313,126 @@ def render_report(*, log_file: str, index_path: str, analyzed_lines: int, matche
         for item in suggestions[:5]:
             lines.append(f"  - `{item['pattern']}` ({item['count']} hits)")
     return "\n".join(lines)
+
+
+def generate_diagnosis(runtime_findings: dict, matches: list[dict], query_focus: dict | None = None) -> dict:
+    findings: list[str] = []
+    event_types = runtime_findings.get("event_types", {})
+    missing = runtime_findings.get("missing_events", [])
+    top_sources = _top_source_rows(matches, max_rows=3)
+    source_names = [str(row.get("function", "")).split(".")[-1] for row in top_sources if row.get("function")]
+    matched_terms = set((query_focus or {}).get("matched_terms", []))
+
+    if query_focus and matched_terms:
+        findings.append(f"Query matched runtime/source vocabulary: {', '.join(sorted(matched_terms))}.")
+    if source_names:
+        findings.append(f"Most relevant source areas: {', '.join(source_names)}.")
+    if missing:
+        seqs = sorted({str(item.get("sequence")) for item in missing if item.get("sequence")})
+        lost = sorted({str(label) for item in missing for label in item.get("missing", [])})
+        findings.append(f"Expected sequence did not complete for {', '.join(seqs)}.")
+    if event_types.get("timeout") or event_types.get("exception") or event_types.get("error"):
+        findings.append("High-severity runtime evidence is present; inspect nearby context before source changes.")
+    elif missing:
+        findings.append("No generic error/timeout was observed, so the strongest signal is the missing expected follow-up event.")
+
+    missing_labels = sorted({str(label) for item in missing for label in item.get("missing", [])})
+    summary = "LogGraph found a likely incomplete runtime path."
+    if query_focus and source_names:
+        summary = f"Query `{query_focus.get('query')}` is most strongly associated with `{source_names[0]}`."
+    if missing_labels:
+        summary += f" Missing follow-up: {', '.join(missing_labels)}."
+    return {"summary": summary, "findings": findings, "missing": missing_labels}
+
+
+def build_evidence_trace(runtime_findings: dict, matches: list[dict], query_focus: dict | None = None) -> list[dict]:
+    trace: list[dict] = []
+    for row in _top_source_rows(matches, max_rows=5):
+        match = _match_for_candidate(matches, row)
+        detail = _best_log_detail(match.get("log", "") if match else "")
+        trace.append({
+            "kind": "source_match",
+            "label": f"Relevant source `{row.get('function', 'unknown')}`",
+            "detail": _shorten(detail or "; ".join(row.get("reasons", [])[:2]), 180),
+            "line": match.get("line") if match else None,
+            "source": f"{row.get('file')}:{row.get('line')}",
+        })
+    for item in runtime_findings.get("missing_events", [])[:3]:
+        trace.append({
+            "kind": "missing_event",
+            "label": "Expected follow-up event missing",
+            "detail": f"session `{item.get('session_id') or 'global'}` sequence `{item.get('sequence')}` missing {', '.join(item.get('missing', []))}",
+        })
+    return trace
+
+
+def generate_profile_warnings(runtime_findings: dict, profile: dict) -> list[dict]:
+    warnings: list[dict] = []
+    missing_events = runtime_findings.get("missing_events", [])
+    if not missing_events:
+        return warnings
+    all_labels: set[str] = set()
+    labels_by_session: dict[str, set[str]] = {}
+    for timeline in runtime_findings.get("session_timelines", []):
+        labels = {str(label) for label in timeline.get("labels", [])}
+        all_labels.update(labels)
+        labels_by_session[str(timeline.get("session_id") or "global")] = labels
+    for item in missing_events:
+        session = str(item.get("session_id") or "global")
+        observed = labels_by_session.get(session, set())
+        for label in item.get("missing", []):
+            label = str(label)
+            if label in all_labels and label not in observed:
+                warnings.append({
+                    "type": "sequence_session_mismatch",
+                    "sequence": item.get("sequence"),
+                    "message": f"Expected sequence `{item.get('sequence')}` may be over-broad: `{label}` is observed elsewhere but not with session `{session}`.",
+                    "suggestion": "Check whether both events share the same session key; if not, split the sequence or add a profile rule with a shared correlation key.",
+                })
+            elif label not in all_labels:
+                warnings.append({
+                    "type": "sequence_unobserved_event",
+                    "sequence": item.get("sequence"),
+                    "message": f"Expected sequence `{item.get('sequence')}` references `{label}`, but this label was not observed in the analyzed log slice.",
+                    "suggestion": "Confirm the event pattern in `.loggraph/profile.yaml` or analyze a wider log window with `--all-lines`.",
+                })
+    return _dedupe_warnings(warnings)
+
+
+def _match_for_candidate(matches: list[dict], candidate: dict) -> dict | None:
+    wanted = candidate.get("function_id") or candidate.get("function")
+    for match in matches:
+        for cand in match.get("candidates", []):
+            current = cand.get("function_id") or cand.get("function")
+            if current == wanted:
+                return match
+    return None
+
+
+def _best_log_detail(log_text: str) -> str:
+    for line in reversed(str(log_text).splitlines()):
+        stripped = line.strip()
+        if not stripped or set(stripped) <= {"└", "─", "┘", "│", "|", " "}:
+            continue
+        return stripped
+    return ""
+
+
+def _dedupe_warnings(warnings: list[dict]) -> list[dict]:
+    seen = set()
+    unique = []
+    for warning in warnings:
+        key = (warning.get("type"), warning.get("sequence"), warning.get("message"))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(warning)
+    return unique
+
+
+def _shorten(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def _top_source_rows(matches: list[dict], *, max_rows: int) -> list[dict]:
