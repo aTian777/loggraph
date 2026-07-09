@@ -7,6 +7,12 @@ LogGraph is a CodeGraph-inspired CLI that indexes Python, Kotlin, Java, TypeScri
 ### As a Pi package from GitHub
 
 ```bash
+pi install git:github.com/aTian777/loggraph@v0.2.0
+```
+
+For the latest development version:
+
+```bash
 pi install git:github.com/aTian777/loggraph@main
 ```
 
