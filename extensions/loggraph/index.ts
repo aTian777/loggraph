@@ -337,6 +337,7 @@ export default function (pi: ExtensionAPI) {
       const explainActions = new Set(["explain", "why", "诊断", "解释", "为什么"]);
       const compareActions = new Set(["compare", "diff", "对比", "比较"]);
       const auditActions = new Set(["audit", "quality", "审计", "质量"]);
+      const doctorActions = new Set(["doctor", "health", "检查", "健康"]);
       const profileActions = new Set(["profile", "配置", "画像"]);
 
       if (!trimmed || initActions.has(action)) {
@@ -379,6 +380,42 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify(stdout, "info");
         } catch (error) {
           ctx.ui.notify(`LogGraph audit failed.\n${errorMessage(error)}`, "error");
+        }
+        return;
+      }
+
+      if (doctorActions.has(action)) {
+        const parsed = parseLogFileAndQuery(ctx.cwd, parts.slice(1).join(" "));
+        const cliArgs = ["doctor", ctx.cwd];
+        let doctorLogFile = "";
+        let doctorQuery = "";
+        if (!("error" in parsed) && isFile(parsed.logFile)) {
+          doctorLogFile = parsed.logFile;
+          doctorQuery = parsed.query;
+          cliArgs.push("--log-file", parsed.logFile, "--all-lines");
+          if (parsed.query) cliArgs.push("--query", parsed.query);
+        }
+        try {
+          const stdout = await runLogGraph(pi, cliArgs, ctx.cwd, undefined);
+          ctx.ui.notify("Routing LogGraph doctor report to the agent...", "info");
+          pi.sendUserMessage([
+            {
+              type: "text",
+              text: [
+                "Explain this LogGraph doctor report in Chinese.",
+                "Summarize: 1) index health/staleness, 2) profile health, 3) log-aware lint status if present, 4) the next command the user should run first.",
+                `Project: ${ctx.cwd}`,
+                `Log file: ${doctorLogFile || "(none)"}`,
+                `Focus query: ${doctorQuery || "(none)"}`,
+                "Doctor report:",
+                "```markdown",
+                stdout,
+                "```",
+              ].join("\n"),
+            },
+          ]);
+        } catch (error) {
+          ctx.ui.notify(`LogGraph doctor failed.\n${errorMessage(error)}`, "error");
         }
         return;
       }

@@ -227,7 +227,7 @@ def cmd_audit(args):
 
 def cmd_doctor(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
-    report = doctor_project(args.project, index_path)
+    report = doctor_project(args.project, index_path, log_file=args.log_file, query=args.query or "", all_lines=args.all_lines)
     if args.format == "markdown":
         print(render_doctor_report(report))
     else:
@@ -401,6 +401,9 @@ def build_parser():
     s = sub.add_parser("doctor")
     s.add_argument("project")
     s.add_argument("--index", help="Index cache path. Defaults to <project>/.loggraph/index.json.")
+    s.add_argument("--log-file", help="Optional log file for log-aware profile health checks.")
+    s.add_argument("--query", help="Focus log-aware doctor checks on these terms.")
+    s.add_argument("--all-lines", action="store_true", help="Analyze all log lines for log-aware checks.")
     s.add_argument("--format", choices=["json", "markdown"], default="markdown")
     s.set_defaults(func=cmd_doctor)
     s = sub.add_parser("compare")

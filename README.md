@@ -91,6 +91,7 @@ loggraph profile suggest .
 loggraph profile init .
 loggraph profile refine . --log-file failed.log --all-lines
 loggraph profile refine . --log-file failed.log --all-lines --apply
+loggraph doctor . --log-file failed.log --query "pcb await" --all-lines
 loggraph profile lint . --log-file failed.log --query "pcb await" --all-lines --fix-suggest
 loggraph profile lint . --log-file failed.log --query "pcb await" --all-lines --fix-suggest --format json
 loggraph profile cleanup . --patch cleanup.json --dry-run
@@ -133,6 +134,7 @@ Inside Pi, `/loggraph` supports common workflows:
 /loggraph explain app.log pcb await
 /loggraph app.log pcb await
 /loggraph app.log 为什么失败
+/loggraph doctor app.log pcb await
 /loggraph compare success.log failed.log
 /loggraph audit
 /loggraph profile init

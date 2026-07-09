@@ -42,23 +42,36 @@ def suggest_app_identifiers(project: str | Path) -> list[str]:
     return candidates
 
 
-def doctor_project(project: str | Path, index_path: str | Path) -> dict[str, Any]:
+def doctor_project(project: str | Path, index_path: str | Path, *, log_file: str | Path | None = None, query: str = "", all_lines: bool = False) -> dict[str, Any]:
     project_path = Path(project)
     index = Path(index_path)
+    profile_path = default_profile_path(project_path)
     profile = load_project_profile(project_path)
     status = {
         "project": str(project_path.resolve()),
         "index": str(index),
         "index_exists": index.exists(),
-        "profile": str(default_profile_path(project_path)),
-        "profile_exists": default_profile_path(project_path).exists(),
+        "index_stale": False,
+        "newest_source_mtime": 0.0,
+        "index_mtime": index.stat().st_mtime if index.exists() else 0.0,
+        "profile": str(profile_path),
+        "profile_exists": profile_path.exists(),
         "app_identifiers": profile.get("app_identifiers", []),
         "exclude_paths": profile.get("exclude_paths", []),
         "suggested_app_identifiers": suggest_app_identifiers(project_path),
+        "profile_health": profile_health(profile),
+        "log_file": str(log_file) if log_file else "",
+        "query": query,
         "recommended_next": [],
     }
     if not status["index_exists"]:
         status["recommended_next"].append("loggraph init <project>")
+    else:
+        newest = newest_source_mtime(project_path, exclude_paths=profile.get("exclude_paths", []))
+        status["newest_source_mtime"] = newest
+        status["index_stale"] = newest > status["index_mtime"]
+        if status["index_stale"]:
+            status["recommended_next"].append("loggraph init <project>")
     if not status["profile_exists"]:
         status["recommended_next"].append("loggraph profile init <project>")
     if not status["app_identifiers"] and status["suggested_app_identifiers"]:
@@ -69,7 +82,58 @@ def doctor_project(project: str | Path, index_path: str | Path) -> dict[str, Any
         status["log_sites"] = len(idx.log_sites)
         status["learned_patterns"] = len(idx.metadata.get("event_profile", {}).get("learned_patterns", []))
         status["recommended_next"].append("loggraph audit <project>")
+    if log_file and status["profile_exists"] and status["index_exists"]:
+        lint = lint_profile(project_path, index, log_file=log_file, query=query, all_lines=all_lines, fix_suggest=True)
+        status["profile_lint"] = {
+            "problems": len(lint.get("problems", [])),
+            "warnings": sum(1 for p in lint.get("problems", []) if p.get("severity") == "warning"),
+            "errors": sum(1 for p in lint.get("problems", []) if p.get("severity") == "error"),
+            "infos": sum(1 for p in lint.get("problems", []) if p.get("severity") == "info"),
+            "cleanup_candidates": sum(len(v) if isinstance(v, list) else sum(len(items) for items in v.values()) for v in (lint.get("cleanup_patch") or {}).values()),
+        }
+        q = f" --query {query!r}" if query else ""
+        status["recommended_next"].insert(0, f"loggraph explain <project> --log-file {Path(log_file).name}{q}")
+        status["recommended_next"].insert(1, f"loggraph profile lint <project> --log-file {Path(log_file).name}{q} --fix-suggest")
     return status
+
+
+def profile_health(profile: dict[str, Any]) -> dict[str, int]:
+    return {
+        "app_identifiers": len(profile.get("app_identifiers") or []),
+        "exclude_paths": len(profile.get("exclude_paths") or []),
+        "session_keys": len(profile.get("session_keys") or []),
+        "entities": len(profile.get("entities") or {}),
+        "events": len(profile.get("events") or {}),
+        "expected_sequences": len(profile.get("expected_sequences") or {}),
+    }
+
+
+def newest_source_mtime(project: Path, *, exclude_paths: list[str] | None = None) -> float:
+    newest = 0.0
+    exclude_paths = exclude_paths or []
+    suffixes = {".py", ".kt", ".java", ".ts", ".tsx", ".js", ".go", ".c", ".cc", ".cpp", ".h", ".hpp"}
+    for path in project.rglob("*"):
+        if not path.is_file() or path.suffix not in suffixes:
+            continue
+        rel = path.relative_to(project).as_posix()
+        if _skip_doctor_path(rel, exclude_paths):
+            continue
+        try:
+            newest = max(newest, path.stat().st_mtime)
+        except OSError:
+            continue
+    return newest
+
+
+def _skip_doctor_path(rel: str, exclude_paths: list[str]) -> bool:
+    if rel.startswith(".loggraph/") or "/build/" in f"/{rel}/" or "/.git/" in f"/{rel}/":
+        return True
+    for pattern in exclude_paths:
+        normalized = str(pattern).replace("\\", "/")
+        literal = normalized.replace("**/", "").replace("/**", "").replace("*", "")
+        if literal and literal in rel:
+            return True
+    return False
 
 
 def render_doctor_report(status: dict[str, Any]) -> str:
@@ -88,6 +152,30 @@ def render_doctor_report(status: dict[str, Any]) -> str:
             f"Functions: {status.get('functions', 0)}",
             f"Log sites: {status.get('log_sites', 0)}",
             f"Learned patterns: {status.get('learned_patterns', 0)}",
+            f"Index stale: {status.get('index_stale', False)}",
+        ])
+    health = status.get("profile_health") or {}
+    if health:
+        lines.extend([
+            "",
+            "## Profile health",
+            f"- App identifiers: {health.get('app_identifiers', 0)}",
+            f"- Session keys: {health.get('session_keys', 0)}",
+            f"- Entities: {health.get('entities', 0)}",
+            f"- Events: {health.get('events', 0)}",
+            f"- Expected sequences: {health.get('expected_sequences', 0)}",
+            f"- Exclude paths: {health.get('exclude_paths', 0)}",
+        ])
+    lint = status.get("profile_lint")
+    if lint:
+        lines.extend([
+            "",
+            "## Log-aware profile lint",
+            f"- Problems: {lint.get('problems', 0)}",
+            f"- Warnings: {lint.get('warnings', 0)}",
+            f"- Errors: {lint.get('errors', 0)}",
+            f"- Info: {lint.get('infos', 0)}",
+            f"- Cleanup candidates: {lint.get('cleanup_candidates', 0)}",
         ])
     lines.extend(["", "## Recommended next"])
     lines.extend([f"- {item}" for item in status.get("recommended_next", [])] or ["- No immediate action."])
