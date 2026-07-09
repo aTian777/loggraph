@@ -129,6 +129,8 @@ def find_missing_events(session_timelines: list[dict[str, Any]], profile: dict[s
         expected = [str(item) for item in sequence]
         for timeline in session_timelines:
             observed = timeline.get("labels", [])
+            if expected and expected[0] not in observed:
+                continue
             cursor = 0
             absent = []
             for item in expected:

@@ -43,12 +43,15 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
         entry = parse_log_block(raw)
         if event := extract_event(entry, no, event_profile):
             events.append(event)
-        candidates = locator.locate(entry, top=top)
-        if candidates:
+        candidates = locator.locate(entry, top=max(top, 10 if query_tokens else top))
+        candidate_dicts = [asdict(c) for c in candidates]
+        if query_tokens:
+            candidate_dicts = boost_query_relevance(candidate_dicts, raw, query_tokens)[:top]
+        if candidate_dicts:
             item = {
                 "line": no,
                 "log": raw,
-                "candidates": enrich_candidates([asdict(c) for c in candidates], source_context=source_context),
+                "candidates": enrich_candidates(candidate_dicts, source_context=source_context),
             }
             if context > 0:
                 item["context"] = context_window(lines, no, context)
@@ -77,6 +80,7 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
             "states": event_profile.get("states", [])[:10],
         },
         "runtime_findings": runtime_findings,
+        "query_focus": query_focus_summary(query, query_tokens, events, matches),
         "context_windows": context_windows,
         "report_markdown": render_report(
             log_file=str(path),
@@ -84,6 +88,7 @@ def analyze_log(index_path: str | Path, log_file: str | Path, *, top: int = 3, a
             analyzed_lines=analyzed_lines,
             matches=matches,
             runtime_findings=runtime_findings,
+            query_focus=query_focus_summary(query, query_tokens, events, matches),
             context_windows=context_windows,
             max_matches=top,
             detail=detail,
@@ -164,13 +169,14 @@ def compact_summary(report: dict, *, max_matches: int = 10) -> dict:
         "top_matches": report["matches"][:max_matches],
         "event_profile_summary": report.get("event_profile_summary", {}),
         "runtime_findings": report.get("runtime_findings", {}),
+        "query_focus": report.get("query_focus", {}),
         "context_windows": report.get("context_windows", []),
         "domain_findings": report["domain_findings"],
         "report_markdown": report.get("report_markdown", ""),
     }
 
 
-def render_report(*, log_file: str, index_path: str, analyzed_lines: int, matches: list[dict], runtime_findings: dict, context_windows: list[dict] | None = None, max_matches: int = 3, detail: str = "normal") -> str:
+def render_report(*, log_file: str, index_path: str, analyzed_lines: int, matches: list[dict], runtime_findings: dict, query_focus: dict | None = None, context_windows: list[dict] | None = None, max_matches: int = 3, detail: str = "normal") -> str:
     lines = [
         "# LogGraph Findings",
         "",
@@ -180,9 +186,16 @@ def render_report(*, log_file: str, index_path: str, analyzed_lines: int, matche
         f"- Analyzed lines: {analyzed_lines}",
         f"- Matched source-bearing log lines: {len(matches)}",
         f"- Extracted runtime events: {runtime_findings.get('event_count', 0)}",
+    ]
+    if query_focus:
+        lines.extend([
+            f"- Query: `{query_focus.get('query', '')}`",
+            f"- Matched query terms: {', '.join(query_focus.get('matched_terms', [])) or 'none'}",
+        ])
+    lines.extend([
         "",
         "## Key runtime evidence",
-    ]
+    ])
     suspicious = runtime_findings.get("suspicious_events", [])
     if suspicious:
         for event in suspicious[:10]:
@@ -272,6 +285,44 @@ def _top_source_rows(matches: list[dict], *, max_rows: int) -> list[dict]:
             if prev is None or cand.get("score", 0) > prev.get("score", 0):
                 best[fid] = cand
     return sorted(best.values(), key=lambda c: (-c.get("score", 0), c.get("file", ""), c.get("line", 0)))[:max_rows]
+
+
+def boost_query_relevance(candidates: list[dict], log_text: str, query_tokens: list[str]) -> list[dict]:
+    for cand in candidates:
+        hay = " ".join([
+            log_text,
+            str(cand.get("function", "")),
+            str(cand.get("file", "")),
+            " ".join(cand.get("reasons", [])),
+        ]).lower()
+        matched = [term for term in query_tokens if term.lower() in hay]
+        if matched:
+            cand["score"] = float(cand.get("score", 0)) + 12.0 * len(set(matched))
+            cand.setdefault("reasons", []).append(f"query relevance: {', '.join(sorted(set(matched))) }")
+    return sorted(candidates, key=lambda c: (-float(c.get("score", 0)), c.get("file", ""), c.get("line", 0)))
+
+
+def query_focus_summary(query: str, query_tokens: list[str], events: list, matches: list[dict]) -> dict:
+    if not query:
+        return {}
+    matched_terms = set()
+    for event in events:
+        hay = event.message.lower()
+        for term in query_tokens:
+            if term.lower() in hay:
+                matched_terms.add(term)
+    for match in matches:
+        hay = match.get("log", "").lower()
+        for term in query_tokens:
+            if term.lower() in hay:
+                matched_terms.add(term)
+    return {
+        "query": query,
+        "expanded_terms": query_tokens,
+        "matched_terms": sorted(matched_terms),
+        "matched_events": len(events),
+        "matched_source_lines": len(matches),
+    }
 
 
 def enrich_candidates(candidates: list[dict], *, source_context: int) -> list[dict]:

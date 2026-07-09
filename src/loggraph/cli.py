@@ -99,10 +99,14 @@ def cmd_analyze(args):
 
 def cmd_profile_suggest(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
-    idx = load_index(index_path)
-    profile = dict(idx.metadata.get("event_profile", {}))
-    profile.setdefault("app_identifiers", suggest_app_identifiers(args.project))
-    text = render_profile_suggestion(profile)
+    if args.from_log:
+        report = refine_profile(index_path, args.from_log, project=args.project, all_lines=args.all_lines, query=args.query or "")
+        text = report["patch_yaml"]
+    else:
+        idx = load_index(index_path)
+        profile = dict(idx.metadata.get("event_profile", {}))
+        profile.setdefault("app_identifiers", suggest_app_identifiers(args.project))
+        text = render_profile_suggestion(profile)
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(text, encoding="utf-8")
@@ -123,7 +127,7 @@ def cmd_profile_init(args):
 
 def cmd_profile_refine(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
-    report = refine_profile(index_path, args.log_file, project=args.project, all_lines=args.all_lines)
+    report = refine_profile(index_path, args.log_file, project=args.project, all_lines=args.all_lines, query=args.query or "")
     if args.apply:
         apply_profile_patch(args.project, report["patch_yaml"], force=True)
         report["applied"] = True
@@ -144,7 +148,7 @@ def cmd_profile_apply(args):
 
 def cmd_profile_sequence(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
-    report = sequence_from_log(index_path, args.log_file, project=args.project, name=args.name, all_lines=args.all_lines)
+    report = sequence_from_log(index_path, args.log_file, project=args.project, name=args.name, all_lines=args.all_lines, query=args.query or "")
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(report["yaml"], encoding="utf-8")
@@ -268,6 +272,9 @@ def build_parser():
     ps.add_argument("project")
     ps.add_argument("--index", help="Index cache path. Defaults to <project>/.loggraph/index.json.")
     ps.add_argument("--out", help="Write suggested profile to this path.")
+    ps.add_argument("--from-log", help="Also use a real log file to suggest profile rules.")
+    ps.add_argument("--query", help="Focus log-based suggestions on these terms.")
+    ps.add_argument("--all-lines", action="store_true")
     ps.set_defaults(func=cmd_profile_suggest)
     pi = profile_sub.add_parser("init")
     pi.add_argument("project")
@@ -280,6 +287,7 @@ def build_parser():
     pr.add_argument("--log-file", required=True)
     pr.add_argument("--index", help="Index cache path. Defaults to <project>/.loggraph/index.json.")
     pr.add_argument("--all-lines", action="store_true")
+    pr.add_argument("--query", help="Focus refinement on these terms.")
     pr.add_argument("--format", choices=["json", "yaml"], default="yaml")
     pr.add_argument("--out", help="Write suggested YAML patch to this path.")
     pr.add_argument("--apply", action="store_true", help="Apply the suggested patch to <project>/.loggraph/profile.yaml.")
@@ -295,6 +303,7 @@ def build_parser():
     pq.add_argument("--name", default="success")
     pq.add_argument("--index", help="Index cache path. Defaults to <project>/.loggraph/index.json.")
     pq.add_argument("--all-lines", action="store_true")
+    pq.add_argument("--query", help="Focus sequence extraction on these terms.")
     pq.add_argument("--format", choices=["json", "yaml"], default="yaml")
     pq.add_argument("--out", help="Write expected sequence YAML to this path.")
     pq.set_defaults(func=cmd_profile_sequence)

@@ -150,8 +150,8 @@ def render_audit_report(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def refine_profile(index_path: str | Path, log_file: str | Path, *, project: str | Path, all_lines: bool = False) -> dict[str, Any]:
-    report = analyze_log(index_path, log_file, project=project, app_only=not all_lines, context=0)
+def refine_profile(index_path: str | Path, log_file: str | Path, *, project: str | Path, all_lines: bool = False, query: str = "") -> dict[str, Any]:
+    report = analyze_log(index_path, log_file, project=project, app_only=not all_lines, context=0, query=query)
     runtime = report.get("runtime_findings", {})
     suggestions = runtime.get("suggested_event_rules", [])
     session_keys = report.get("event_profile_summary", {}).get("session_keys", [])
@@ -166,6 +166,7 @@ def refine_profile(index_path: str | Path, log_file: str | Path, *, project: str
             learned.append(item)
             seen.add(item["pattern"])
     profile = {
+        "app_identifiers": suggest_app_identifiers(project),
         "session_keys": session_keys,
         "states": states,
         "learned_patterns": learned[:30],
@@ -182,8 +183,8 @@ def refine_profile(index_path: str | Path, log_file: str | Path, *, project: str
     }
 
 
-def sequence_from_log(index_path: str | Path, log_file: str | Path, *, project: str | Path, name: str, all_lines: bool = False) -> dict[str, Any]:
-    report = analyze_log(index_path, log_file, project=project, app_only=not all_lines, context=0)
+def sequence_from_log(index_path: str | Path, log_file: str | Path, *, project: str | Path, name: str, all_lines: bool = False, query: str = "") -> dict[str, Any]:
+    report = analyze_log(index_path, log_file, project=project, app_only=not all_lines, context=0, query=query)
     labels = []
     for timeline in report.get("runtime_findings", {}).get("session_timelines", []):
         for label in timeline.get("labels", []):
