@@ -334,7 +334,8 @@ export default function (pi: ExtensionAPI) {
       const action = (parts[0] ?? "").toLowerCase();
       const initActions = new Set(["init", "index", "初始化", "索引"]);
       const analyzeActions = new Set(["analyze", "analyse", "log", "logs", "分析", "日志"]);
-      const explainActions = new Set(["explain", "why", "诊断", "解释", "为什么"]);
+      const explainActions = new Set(["explain", "why", "解释", "为什么"]);
+      const diagnoseActions = new Set(["diagnose", "诊断", "诊断报告"]);
       const compareActions = new Set(["compare", "diff", "对比", "比较"]);
       const auditActions = new Set(["audit", "quality", "审计", "质量"]);
       const doctorActions = new Set(["doctor", "health", "检查", "健康"]);
@@ -380,6 +381,39 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify(stdout, "info");
         } catch (error) {
           ctx.ui.notify(`LogGraph audit failed.\n${errorMessage(error)}`, "error");
+        }
+        return;
+      }
+
+      if (diagnoseActions.has(action)) {
+        const parsed = parseLogFileAndQuery(ctx.cwd, parts.slice(1).join(" "));
+        if ("error" in parsed || !isFile(parsed.logFile)) {
+          ctx.ui.notify("Usage: /loggraph diagnose <log-file> [query]", "error");
+          return;
+        }
+        try {
+          const cliArgs = ["diagnose", ctx.cwd, "--log-file", parsed.logFile, "--all-lines"];
+          if (parsed.query) cliArgs.push("--query", parsed.query);
+          const stdout = await runLogGraph(pi, cliArgs, ctx.cwd, undefined);
+          ctx.ui.notify("Routing LogGraph diagnosis report to the agent...", "info");
+          pi.sendUserMessage([
+            {
+              type: "text",
+              text: [
+                "Summarize this unified LogGraph diagnosis in Chinese.",
+                "Focus on: 1) health/staleness, 2) likely root/stuck point, 3) evidence trace, 4) profile issues/cleanup candidates, 5) exact next action.",
+                `Project: ${ctx.cwd}`,
+                `Log file: ${parsed.logFile}`,
+                `Focus query: ${parsed.query || "(none)"}`,
+                "Diagnosis report:",
+                "```markdown",
+                stdout,
+                "```",
+              ].join("\n"),
+            },
+          ]);
+        } catch (error) {
+          ctx.ui.notify(`LogGraph diagnose failed.\n${errorMessage(error)}`, "error");
         }
         return;
       }

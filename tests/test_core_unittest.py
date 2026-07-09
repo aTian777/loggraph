@@ -310,6 +310,13 @@ class LogGraphCoreTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn("Log-aware profile lint", stdout.getvalue())
 
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = cli_main(["diagnose", str(root), "--log-file", str(target), "--index", str(out), "--all-lines", "--query", "pcb"])
+            self.assertEqual(rc, 0)
+            self.assertIn("LogGraph Diagnosis", stdout.getvalue())
+            self.assertIn("Evidence trace", stdout.getvalue())
+
             patch_file = root / "patch.yaml"
             stdout = io.StringIO()
             with redirect_stdout(stdout):

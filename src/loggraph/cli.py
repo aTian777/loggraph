@@ -13,7 +13,7 @@ from loggraph.graph.render import render
 from loggraph.evaluation.runner import evaluate
 from loggraph.analyzer import analyze_log, compare_logs, compact_summary, default_index_path, write_analysis
 from loggraph.profile import default_profile_path, load_project_profile, merge_manual_profiles, parse_simple_yaml, render_manual_profile, render_profile_suggestion
-from loggraph.quality import audit_index, cleanup_profile, doctor_project, lint_profile, load_cleanup_patch, refine_profile, render_audit_report, render_cleanup_report, render_doctor_report, render_profile_lint_report, sequence_from_log, suggest_app_identifiers
+from loggraph.quality import audit_index, cleanup_profile, diagnose_project, doctor_project, lint_profile, load_cleanup_patch, refine_profile, render_audit_report, render_cleanup_report, render_doctor_report, render_profile_lint_report, sequence_from_log, suggest_app_identifiers
 
 
 def cmd_index(args):
@@ -234,6 +234,21 @@ def cmd_doctor(args):
         print(json.dumps(report, ensure_ascii=False, indent=2))
 
 
+def cmd_diagnose(args):
+    index_path = Path(args.index) if args.index else default_index_path(args.project)
+    report = diagnose_project(args.project, index_path, args.log_file, query=args.query or "", all_lines=args.all_lines)
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        if args.format == "markdown":
+            Path(args.out).write_text(report["report_markdown"], encoding="utf-8")
+        else:
+            Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    if args.format == "markdown":
+        print(report["report_markdown"])
+    else:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+
+
 def cmd_compare(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
     report = compare_logs(index_path, args.baseline, args.target, project=args.project, top=args.top, app_only=not args.all_lines, context=args.context, detail=args.detail, query=args.query or "")
@@ -406,6 +421,15 @@ def build_parser():
     s.add_argument("--all-lines", action="store_true", help="Analyze all log lines for log-aware checks.")
     s.add_argument("--format", choices=["json", "markdown"], default="markdown")
     s.set_defaults(func=cmd_doctor)
+    s = sub.add_parser("diagnose")
+    s.add_argument("project")
+    s.add_argument("--log-file", required=True)
+    s.add_argument("--index", help="Index cache path. Defaults to <project>/.loggraph/index.json.")
+    s.add_argument("--query", help="Focus diagnosis on these terms.")
+    s.add_argument("--all-lines", action="store_true")
+    s.add_argument("--format", choices=["json", "markdown"], default="markdown")
+    s.add_argument("--out", help="Write unified diagnosis report to this path.")
+    s.set_defaults(func=cmd_diagnose)
     s = sub.add_parser("compare")
     s.add_argument("project")
     s.add_argument("--baseline", required=True, help="Successful/baseline log file.")

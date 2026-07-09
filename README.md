@@ -59,13 +59,14 @@ loggraph analyze . --log-file app.log --format markdown --detail normal --contex
 
 The report includes runtime events, session timelines, duration observations, rule-based hypotheses, diagnosis, evidence trace, source excerpts for likely code locations, missing expected events from `.loggraph/profile.yaml`, profile warnings, context windows around suspicious lines, and likely source areas. Use `--detail brief|normal|full` to control report verbosity.
 
-### Explain a focused log question
+### Explain or diagnose a focused log question
 
 ```bash
 loggraph explain . --log-file app.log --query "pcb await"
+loggraph diagnose . --log-file app.log --query "pcb await" --all-lines
 ```
 
-This prints a concise diagnosis, evidence trace, and profile warnings without the full analysis report.
+`explain` prints a concise diagnosis, evidence trace, and profile warnings without the full analysis report. `diagnose` combines doctor, explain evidence, profile lint, cleanup candidates, and recommended next actions into one report.
 
 ### Compare a successful log with a failed log
 
@@ -132,6 +133,7 @@ Inside Pi, `/loggraph` supports common workflows:
 ```text
 /loggraph init
 /loggraph explain app.log pcb await
+/loggraph diagnose app.log pcb await
 /loggraph app.log pcb await
 /loggraph app.log 为什么失败
 /loggraph doctor app.log pcb await

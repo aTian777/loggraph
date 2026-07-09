@@ -561,6 +561,106 @@ def cleanup_profile(project: str | Path, patch: dict[str, Any], *, apply: bool =
     }
 
 
+def diagnose_project(project: str | Path, index_path: str | Path, log_file: str | Path, *, query: str = "", all_lines: bool = False) -> dict[str, Any]:
+    from loggraph.analyzer import analyze_log
+    doctor = doctor_project(project, index_path, log_file=log_file, query=query, all_lines=all_lines)
+    analysis = analyze_log(index_path, log_file, project=project, app_only=not all_lines, query=query, context=2, source_context=3, detail="normal")
+    lint = lint_profile(project, index_path, log_file=log_file, query=query, all_lines=all_lines, fix_suggest=True)
+    report = {
+        "project": str(Path(project).resolve()),
+        "log_file": str(log_file),
+        "query": query,
+        "doctor": doctor,
+        "diagnosis": analysis.get("diagnosis", {}),
+        "evidence_trace": analysis.get("evidence_trace", []),
+        "profile_lint": lint,
+        "top_matches": analysis.get("matches", [])[:5],
+        "recommended_next": diagnose_recommendations(doctor, analysis, lint),
+    }
+    report["report_markdown"] = render_diagnosis_report(report)
+    return report
+
+
+def diagnose_recommendations(doctor: dict[str, Any], analysis: dict[str, Any], lint: dict[str, Any]) -> list[str]:
+    recommendations: list[str] = []
+    if doctor.get("index_stale"):
+        recommendations.append("Rebuild the index with `loggraph init <project>` before trusting source locations.")
+    source_rows = []
+    for step in analysis.get("evidence_trace", []):
+        label = str(step.get("label", ""))
+        match = re.search(r"`([^`]+)`", label)
+        if match and match.group(1) not in source_rows:
+            source_rows.append(match.group(1))
+    if source_rows:
+        recommendations.append(f"Inspect source path around: {', '.join(source_rows[:3])}.")
+    cleanup = lint.get("cleanup_patch") or {}
+    if cleanup:
+        recommendations.append("Review the cleanup_patch with `loggraph profile cleanup <project> --patch cleanup.json --dry-run` before applying safe removals.")
+    if lint.get("problems"):
+        recommendations.append("Review profile lint warnings before treating missing expected events as product bugs.")
+    return recommendations or ["No immediate LogGraph follow-up required; inspect the top evidence trace manually."]
+
+
+def render_diagnosis_report(report: dict[str, Any]) -> str:
+    doctor = report.get("doctor", {})
+    diagnosis = report.get("diagnosis", {})
+    lint = report.get("profile_lint", {})
+    lines = [
+        "# LogGraph Diagnosis",
+        "",
+        f"Project: `{report.get('project')}`",
+        f"Log file: `{report.get('log_file')}`",
+    ]
+    if report.get("query"):
+        lines.append(f"Query: `{report.get('query')}`")
+    lines.extend([
+        "",
+        "## Health",
+        f"- Index exists: {doctor.get('index_exists')}",
+        f"- Index stale: {doctor.get('index_stale')}",
+        f"- Profile exists: {doctor.get('profile_exists')}",
+        f"- Log sites: {doctor.get('log_sites', 0)}",
+    ])
+    health = doctor.get("profile_health") or {}
+    if health:
+        lines.extend([
+            f"- Profile events: {health.get('events', 0)}",
+            f"- Profile session keys: {health.get('session_keys', 0)}",
+            f"- Profile expected sequences: {health.get('expected_sequences', 0)}",
+        ])
+    lines.extend(["", "## Diagnosis"])
+    if diagnosis.get("summary"):
+        lines.append(f"- {diagnosis['summary']}")
+    for item in diagnosis.get("findings", [])[:6]:
+        lines.append(f"- {item}")
+    trace = report.get("evidence_trace") or []
+    if trace:
+        lines.extend(["", "## Evidence trace"])
+        for idx, step in enumerate(trace[:8], 1):
+            detail = f" — {step.get('detail')}" if step.get("detail") else ""
+            lines.append(f"{idx}. {step.get('label')}{detail}")
+            if step.get("source"):
+                lines.append(f"   - source: `{step['source']}`")
+            if step.get("line"):
+                lines.append(f"   - log line: {step['line']}")
+    lines.extend([
+        "",
+        "## Profile issues",
+        f"- Problems: {len(lint.get('problems', []))}",
+        f"- Cleanup candidates: {sum(len(v) if isinstance(v, list) else sum(len(items) for items in v.values()) for v in (lint.get('cleanup_patch') or {}).values())}",
+    ])
+    for problem in lint.get("problems", [])[:8]:
+        lines.append(f"- [{problem.get('severity')}] {problem.get('message')}")
+    cleanup = lint.get("cleanup_patch") or {}
+    if cleanup:
+        lines.extend(["", "## Cleanup patch preview"])
+        for key, values in cleanup.items():
+            lines.append(f"- `{key}`: {values}")
+    lines.extend(["", "## Recommended next"])
+    lines.extend([f"{idx}. {item}" for idx, item in enumerate(report.get("recommended_next", []), 1)])
+    return "\n".join(lines)
+
+
 def render_cleanup_report(report: dict[str, Any]) -> str:
     mode = "Applied" if report.get("applied") else "Dry run"
     lines = [
