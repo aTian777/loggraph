@@ -27,6 +27,32 @@ python3 -m pip install -e .
 
 No runtime dependency is required. `pytest` is needed for tests. Graphviz `dot` is optional; without it LogGraph still writes `.dot` files.
 
+## Quick start
+
+1. Build or refresh the source/log-site index:
+
+```bash
+loggraph init .
+```
+
+2. Run the one-shot diagnosis workflow for a log question:
+
+```bash
+loggraph diagnose . --log-file app.log --query "pcb await" --all-lines --save-artifacts
+```
+
+3. Review profile cleanup suggestions before applying safe removals:
+
+```bash
+loggraph profile cleanup . --patch .loggraph/reports/app.cleanup.json --dry-run
+```
+
+4. In Pi, use the slash command entry point:
+
+```text
+/loggraph diagnose app.log pcb await
+```
+
 ## Commands
 
 ### Build an index
@@ -63,10 +89,10 @@ The report includes runtime events, session timelines, duration observations, ru
 
 ```bash
 loggraph explain . --log-file app.log --query "pcb await"
-loggraph diagnose . --log-file app.log --query "pcb await" --all-lines
+loggraph diagnose . --log-file app.log --query "pcb await" --all-lines --save-artifacts
 ```
 
-`explain` prints a concise diagnosis, evidence trace, and profile warnings without the full analysis report. `diagnose` combines doctor, explain evidence, profile lint, cleanup candidates, and recommended next actions into one report.
+`explain` prints a concise diagnosis, evidence trace, and profile warnings without the full analysis report. `diagnose` combines doctor, explain evidence, profile lint, cleanup candidates, and recommended next actions into one report. With `--save-artifacts`, it writes `.loggraph/reports/<log>.diagnosis.md`, `.diagnosis.json`, and `.cleanup.json`.
 
 ### Compare a successful log with a failed log
 
@@ -195,6 +221,5 @@ Python dynamic dispatch, monkey patching, generated code, and source/log version
 
 ```bash
 cd loggraph
-PYTHONPATH=src python3 -m unittest discover -s tests -p '*unittest.py' -v
-PYTHONPATH=src python3 -m loggraph.cli evaluate --src fixtures/python_projects/service_app --corpus fixtures/labeled_logs/corpus.jsonl --top 3 --min-accuracy 0.90
+scripts/check
 ```

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+python3 -m py_compile src/loggraph/*.py
+PYTHONPATH=src python3 -m unittest discover -s tests -p '*unittest.py' -v
+PYTHONPATH=src python3 -m loggraph.cli evaluate \
+  --src fixtures/python_projects/service_app \
+  --corpus fixtures/labeled_logs/corpus.jsonl \
+  --top 3 \
+  --min-accuracy 0.90

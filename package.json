@@ -1,7 +1,7 @@
 {
   "name": "@atian777/loggraph",
-  "version": "0.1.0",
-  "description": "LogGraph CLI and Pi extension for locating source code from logs.",
+  "version": "0.2.0",
+  "description": "LogGraph CLI and Pi extension for diagnosing logs with code graph evidence.",
   "keywords": ["pi-package", "pi-extension", "loggraph", "logs"],
   "license": "MIT",
   "bin": {

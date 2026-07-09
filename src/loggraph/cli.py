@@ -237,6 +237,8 @@ def cmd_doctor(args):
 def cmd_diagnose(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
     report = diagnose_project(args.project, index_path, args.log_file, query=args.query or "", all_lines=args.all_lines)
+    if args.save_artifacts:
+        report["artifacts"] = save_diagnosis_artifacts(args.project, args.log_file, report)
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         if args.format == "markdown":
@@ -245,8 +247,28 @@ def cmd_diagnose(args):
             Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     if args.format == "markdown":
         print(report["report_markdown"])
+        if report.get("artifacts"):
+            print("\n## Saved artifacts")
+            for key, value in report["artifacts"].items():
+                print(f"- {key}: `{value}`")
     else:
         print(json.dumps(report, ensure_ascii=False, indent=2))
+
+
+def save_diagnosis_artifacts(project: str, log_file: str, report: dict) -> dict[str, str]:
+    out_dir = Path(project) / ".loggraph" / "reports"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = Path(log_file).stem
+    paths = {
+        "markdown": out_dir / f"{stem}.diagnosis.md",
+        "json": out_dir / f"{stem}.diagnosis.json",
+        "cleanup": out_dir / f"{stem}.cleanup.json",
+    }
+    paths["markdown"].write_text(report["report_markdown"], encoding="utf-8")
+    paths["json"].write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    cleanup_patch = report.get("profile_lint", {}).get("cleanup_patch") or {}
+    paths["cleanup"].write_text(json.dumps({"cleanup_patch": cleanup_patch}, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {key: str(path) for key, path in paths.items()}
 
 
 def cmd_compare(args):
@@ -429,6 +451,7 @@ def build_parser():
     s.add_argument("--all-lines", action="store_true")
     s.add_argument("--format", choices=["json", "markdown"], default="markdown")
     s.add_argument("--out", help="Write unified diagnosis report to this path.")
+    s.add_argument("--save-artifacts", action="store_true", help="Write .loggraph/reports/<log>.diagnosis.md, .diagnosis.json, and .cleanup.json.")
     s.set_defaults(func=cmd_diagnose)
     s = sub.add_parser("compare")
     s.add_argument("project")

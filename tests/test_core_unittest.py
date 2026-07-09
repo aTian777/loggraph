@@ -312,10 +312,13 @@ class LogGraphCoreTests(unittest.TestCase):
 
             stdout = io.StringIO()
             with redirect_stdout(stdout):
-                rc = cli_main(["diagnose", str(root), "--log-file", str(target), "--index", str(out), "--all-lines", "--query", "pcb"])
+                rc = cli_main(["diagnose", str(root), "--log-file", str(target), "--index", str(out), "--all-lines", "--query", "pcb", "--save-artifacts"])
             self.assertEqual(rc, 0)
             self.assertIn("LogGraph Diagnosis", stdout.getvalue())
             self.assertIn("Evidence trace", stdout.getvalue())
+            self.assertTrue((root / ".loggraph" / "reports" / "failed.diagnosis.md").exists())
+            self.assertTrue((root / ".loggraph" / "reports" / "failed.diagnosis.json").exists())
+            self.assertTrue((root / ".loggraph" / "reports" / "failed.cleanup.json").exists())
 
             patch_file = root / "patch.yaml"
             stdout = io.StringIO()

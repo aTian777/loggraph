@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "loggraph"
-version = "0.1.0"
-description = "Locate source code from logs using a code graph and log-site index."
+version = "0.2.0"
+description = "Diagnose logs using a code graph, runtime evidence, and project profiles."
 requires-python = ">=3.10"
 dependencies = []
 
