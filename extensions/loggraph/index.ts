@@ -387,20 +387,38 @@ export default function (pi: ExtensionAPI) {
         const sub = (parts[1] ?? "suggest").toLowerCase();
         const rest = parts.slice(2);
         const cliArgs = ["profile", sub, ctx.cwd];
+        let reviewPatch = false;
+        let reviewLogFile = "";
+        let reviewQuery = "";
         if (sub === "refine") {
           const logFile = resolveExistingFilePrefix(ctx.cwd, rest);
           if (!logFile) {
-            ctx.ui.notify("Usage: /loggraph profile refine <log-file>", "error");
+            ctx.ui.notify("Usage: /loggraph profile refine <log-file> [query]", "error");
             return;
           }
+          reviewLogFile = logFile.file;
+          reviewQuery = rest.slice(logFile.used).join(" ");
           cliArgs.push("--log-file", logFile.file, "--all-lines");
+          if (reviewQuery) cliArgs.push("--query", reviewQuery);
+          reviewPatch = true;
+        } else if (sub === "suggest") {
+          const logFile = resolveExistingFilePrefix(ctx.cwd, rest);
+          if (logFile) {
+            reviewLogFile = logFile.file;
+            reviewQuery = rest.slice(logFile.used).join(" ");
+            cliArgs.push("--from-log", logFile.file, "--all-lines");
+            if (reviewQuery) cliArgs.push("--query", reviewQuery);
+            reviewPatch = true;
+          }
         } else if (sub === "sequence") {
           const logFile = resolveExistingFilePrefix(ctx.cwd, rest);
           if (!logFile) {
-            ctx.ui.notify("Usage: /loggraph profile sequence <success-log>", "error");
+            ctx.ui.notify("Usage: /loggraph profile sequence <success-log> [query]", "error");
             return;
           }
+          const query = rest.slice(logFile.used).join(" ");
           cliArgs.push("--from-log", logFile.file, "--name", "success", "--all-lines");
+          if (query) cliArgs.push("--query", query);
         } else if (sub === "apply") {
           const patchFile = resolveExistingFilePrefix(ctx.cwd, rest);
           if (!patchFile) {
@@ -411,7 +429,29 @@ export default function (pi: ExtensionAPI) {
         }
         try {
           const stdout = await runLogGraph(pi, cliArgs, ctx.cwd, undefined);
-          ctx.ui.notify(stdout, "info");
+          if (reviewPatch) {
+            ctx.ui.notify("Routing LogGraph profile patch to the agent for review...", "info");
+            pi.sendUserMessage([
+              {
+                type: "text",
+                text: [
+                  "Review this LogGraph profile patch in Chinese before applying it.",
+                  "Do not apply it automatically. First summarize what the patch changes, why it may help, and any noisy/risky entries to remove.",
+                  "Then ask the user whether to apply it. If the user confirms, apply only the reviewed patch to `.loggraph/profile.yaml`.",
+                  `Project: ${ctx.cwd}`,
+                  `Command: /loggraph profile ${sub}`,
+                  `Log file: ${reviewLogFile || "(none)"}`,
+                  `Focus query: ${reviewQuery || "(none)"}`,
+                  "Patch:",
+                  "```yaml",
+                  stdout,
+                  "```",
+                ].join("\n"),
+              },
+            ]);
+          } else {
+            ctx.ui.notify(stdout, "info");
+          }
         } catch (error) {
           ctx.ui.notify(`LogGraph profile command failed.\n${errorMessage(error)}`, "error");
         }

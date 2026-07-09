@@ -129,8 +129,9 @@ Inside Pi, `/loggraph` supports common workflows:
 /loggraph compare success.log failed.log
 /loggraph audit
 /loggraph profile init
-/loggraph profile refine failed.log
-/loggraph profile sequence success.log
+/loggraph profile refine failed.log pcb await
+/loggraph profile suggest failed.log pcb await
+/loggraph profile sequence success.log delivery
 ```
 
 ### Render a focused subgraph
