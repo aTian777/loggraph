@@ -323,6 +323,13 @@ class LogGraphCoreTests(unittest.TestCase):
 
             stdout = io.StringIO()
             with redirect_stdout(stdout):
+                rc = cli_main(["profile", "lint", str(root), "--log-file", str(target), "--index", str(out), "--all-lines"])
+            self.assertEqual(rc, 0)
+            self.assertIn("LogGraph Profile Lint", stdout.getvalue())
+            self.assertIn("pcb_result", stdout.getvalue())
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
                 rc = cli_main(["analyze", str(root), "--log-file", str(target), "--index", str(out), "--all-lines", "--format", "markdown", "--detail", "brief"])
             self.assertEqual(rc, 0)
             self.assertNotIn("Session timelines", stdout.getvalue())

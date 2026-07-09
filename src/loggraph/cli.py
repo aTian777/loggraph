@@ -13,7 +13,7 @@ from loggraph.graph.render import render
 from loggraph.evaluation.runner import evaluate
 from loggraph.analyzer import analyze_log, compare_logs, compact_summary, default_index_path, write_analysis
 from loggraph.profile import default_profile_path, load_project_profile, merge_manual_profiles, parse_simple_yaml, render_manual_profile, render_profile_suggestion
-from loggraph.quality import audit_index, doctor_project, refine_profile, render_audit_report, render_doctor_report, sequence_from_log, suggest_app_identifiers
+from loggraph.quality import audit_index, doctor_project, lint_profile, refine_profile, render_audit_report, render_doctor_report, render_profile_lint_report, sequence_from_log, suggest_app_identifiers
 
 
 def cmd_index(args):
@@ -195,6 +195,15 @@ def cmd_profile_sequence(args):
         print(json.dumps(report, ensure_ascii=False, indent=2))
 
 
+def cmd_profile_lint(args):
+    index_path = Path(args.index) if args.index else default_index_path(args.project)
+    report = lint_profile(args.project, index_path, log_file=args.log_file, query=args.query or "", all_lines=args.all_lines)
+    if args.format == "markdown":
+        print(render_profile_lint_report(report))
+    else:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+
+
 def cmd_audit(args):
     index_path = Path(args.index) if args.index else default_index_path(args.project)
     report = audit_index(index_path)
@@ -340,6 +349,14 @@ def build_parser():
     pr.add_argument("--out", help="Write suggested YAML patch to this path.")
     pr.add_argument("--apply", action="store_true", help="Apply the suggested patch to <project>/.loggraph/profile.yaml.")
     pr.set_defaults(func=cmd_profile_refine)
+    pl = profile_sub.add_parser("lint")
+    pl.add_argument("project")
+    pl.add_argument("--index", help="Index cache path. Defaults to <project>/.loggraph/index.json.")
+    pl.add_argument("--log-file", help="Validate profile rules against a real log file.")
+    pl.add_argument("--query", help="Focus log-based lint checks on these terms.")
+    pl.add_argument("--all-lines", action="store_true")
+    pl.add_argument("--format", choices=["json", "markdown"], default="markdown")
+    pl.set_defaults(func=cmd_profile_lint)
     pa = profile_sub.add_parser("apply")
     pa.add_argument("project")
     pa.add_argument("--patch", required=True, help="YAML patch file to merge into .loggraph/profile.yaml.")

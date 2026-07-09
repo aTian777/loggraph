@@ -419,6 +419,14 @@ export default function (pi: ExtensionAPI) {
           const query = rest.slice(logFile.used).join(" ");
           cliArgs.push("--from-log", logFile.file, "--name", "success", "--all-lines");
           if (query) cliArgs.push("--query", query);
+        } else if (sub === "lint") {
+          const logFile = resolveExistingFilePrefix(ctx.cwd, rest);
+          if (logFile) {
+            reviewLogFile = logFile.file;
+            reviewQuery = rest.slice(logFile.used).join(" ");
+            cliArgs.push("--log-file", logFile.file, "--all-lines");
+            if (reviewQuery) cliArgs.push("--query", reviewQuery);
+          }
         } else if (sub === "apply") {
           const patchFile = resolveExistingFilePrefix(ctx.cwd, rest);
           if (!patchFile) {
@@ -444,6 +452,24 @@ export default function (pi: ExtensionAPI) {
                   `Focus query: ${reviewQuery || "(none)"}`,
                   "Patch:",
                   "```yaml",
+                  stdout,
+                  "```",
+                ].join("\n"),
+              },
+            ]);
+          } else if (sub === "lint") {
+            ctx.ui.notify("Routing LogGraph profile lint to the agent...", "info");
+            pi.sendUserMessage([
+              {
+                type: "text",
+                text: [
+                  "Explain this LogGraph profile lint report in Chinese.",
+                  "Summarize: 1) which profile rules are risky/noisy, 2) which warnings are only informational, 3) what concrete profile edits you recommend, 4) whether the user should run refine/suggest again.",
+                  `Project: ${ctx.cwd}`,
+                  `Log file: ${reviewLogFile || "(none)"}`,
+                  `Focus query: ${reviewQuery || "(none)"}`,
+                  "Lint report:",
+                  "```markdown",
                   stdout,
                   "```",
                 ].join("\n"),

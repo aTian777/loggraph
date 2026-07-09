@@ -9,6 +9,12 @@ from loggraph.graph.store import load_index
 from loggraph.logs.templates import normalize_text
 from loggraph.profile import default_profile_path, load_project_profile, render_profile_suggestion
 
+GENERIC_PROFILE_TOKENS = {
+    "message", "msg", "send", "recv", "receive", "received", "default", "connected",
+    "success", "failed", "error", "event", "data", "info", "debug", "true", "false",
+    "请求", "响应", "消息", "成功", "失败", "状态", "事件",
+}
+
 SESSION_KEY_PATTERN = re.compile(r"\b(?:traceId|requestId|reqId|deliveryId|orderId|taskId|sessionId|sid|uuid|sn)\b\s*[=:]|\{[^}]*id[^}]*\}|%[sd]", re.I)
 DURATION_PATTERN = re.compile(r"\b(duration|elapsed|cost|took|耗时)\b", re.I)
 STATE_PATTERN = re.compile(r"\b(state|status)\b|状态|Await|Pending|Success|Failed|Timeout", re.I)
@@ -85,6 +91,214 @@ def render_doctor_report(status: dict[str, Any]) -> str:
     lines.extend(["", "## Recommended next"])
     lines.extend([f"- {item}" for item in status.get("recommended_next", [])] or ["- No immediate action."])
     return "\n".join(lines)
+
+
+def lint_profile(project: str | Path, index_path: str | Path, *, log_file: str | Path | None = None, query: str = "", all_lines: bool = False) -> dict[str, Any]:
+    project_path = Path(project)
+    profile_path = default_profile_path(project_path)
+    profile = load_project_profile(project_path)
+    problems: list[dict[str, Any]] = []
+    suggestions: list[str] = []
+    event_match_counts: dict[str, int] = {}
+    session_key_counts: dict[str, int] = {}
+    profile_warnings: list[dict[str, Any]] = []
+
+    if not profile_path.exists():
+        problems.append({"severity": "error", "type": "missing_profile", "message": f"Profile does not exist: {profile_path}"})
+        suggestions.append("Run `loggraph profile init <project>` or `loggraph profile suggest <project> --from-log <log>`.")
+        return _profile_lint_payload(project_path, profile_path, problems, suggestions, event_match_counts, session_key_counts, profile_warnings, log_file, query)
+
+    events = profile.get("events") or {}
+    expected_sequences = profile.get("expected_sequences") or {}
+    defined_event_names = set(events.keys()) | {str(spec.get("type")) for spec in events.values() if isinstance(spec, dict) and spec.get("type")}
+
+    for key in profile.get("session_keys") or []:
+        key_text = str(key)
+        if _looks_like_function_name(key_text):
+            problems.append({"severity": "warning", "type": "suspicious_session_key", "message": f"Session key `{key_text}` looks like a function or method name, not a correlation key."})
+            suggestions.append(f"Remove `{key_text}` from `session_keys` unless it really appears as a stable log correlation field.")
+
+    for entity, spec in (profile.get("entities") or {}).items():
+        aliases = spec.get("aliases", []) if isinstance(spec, dict) else []
+        for alias in aliases:
+            alias_text = str(alias).strip()
+            if _is_generic_profile_token(alias_text):
+                problems.append({"severity": "warning", "type": "generic_alias", "message": f"Entity `{entity}` alias `{alias_text}` is too generic and may over-match unrelated logs."})
+                suggestions.append(f"Remove or narrow alias `{alias_text}` under entity `{entity}`.")
+
+    for name, spec in events.items():
+        if not isinstance(spec, dict):
+            problems.append({"severity": "warning", "type": "invalid_event", "message": f"Event `{name}` should be a mapping with `type` and `patterns`."})
+            continue
+        patterns = [str(item) for item in spec.get("patterns") or []]
+        if not patterns:
+            problems.append({"severity": "warning", "type": "empty_event", "message": f"Event `{name}` has no patterns."})
+            suggestions.append(f"Add distinctive patterns to event `{name}` or remove it.")
+        for pattern in patterns:
+            if _is_generic_profile_token(pattern):
+                problems.append({"severity": "warning", "type": "generic_event_pattern", "message": f"Event `{name}` pattern `{pattern}` is too generic."})
+                suggestions.append(f"Replace `{pattern}` with a more distinctive phrase for event `{name}`.")
+
+    for sequence_name, sequence in expected_sequences.items():
+        if not isinstance(sequence, list):
+            problems.append({"severity": "warning", "type": "invalid_sequence", "message": f"Expected sequence `{sequence_name}` should be a list."})
+            continue
+        for label in sequence:
+            label_text = str(label)
+            if label_text not in defined_event_names:
+                problems.append({"severity": "warning", "type": "undefined_sequence_event", "message": f"Expected sequence `{sequence_name}` references `{label_text}`, but no profile event with that name/type is defined."})
+                suggestions.append(f"Define event `{label_text}` or remove it from sequence `{sequence_name}`.")
+
+    if log_file:
+        raw_text = Path(log_file).read_text(encoding="utf-8", errors="ignore")
+        filtered_text = _filter_text_for_query(raw_text, query)
+        for name, spec in events.items():
+            if not isinstance(spec, dict):
+                continue
+            count = sum(_count_pattern_hits(filtered_text, str(pattern)) for pattern in spec.get("patterns") or [])
+            event_match_counts[name] = count
+            if count == 0:
+                problems.append({"severity": "warning", "type": "unmatched_event", "message": f"Event `{name}` did not match the analyzed log slice."})
+                suggestions.append(f"Check patterns for event `{name}` or analyze a wider log window.")
+        for key in profile.get("session_keys") or []:
+            key_text = str(key)
+            session_key_counts[key_text] = len(re.findall(rf"\b{re.escape(key_text)}\b\s*[=:]", filtered_text))
+            if session_key_counts[key_text] == 0:
+                problems.append({"severity": "info", "type": "unused_session_key", "message": f"Session key `{key_text}` was not observed in the analyzed log slice."})
+        try:
+            report = analyze_log(index_path, log_file, project=project_path, app_only=not all_lines, context=0, query=query)
+            profile_warnings = report.get("profile_warnings", [])
+            for warning in profile_warnings:
+                normalized_warning = _normalize_profile_warning(warning, event_match_counts)
+                problems.append(normalized_warning)
+                if normalized_warning.get("type") == "sequence_session_mismatch":
+                    suggestions.append("Split the expected sequence or add a shared correlation/session key before treating the missing event as a failure.")
+                elif warning.get("suggestion"):
+                    suggestions.append(str(warning["suggestion"]))
+        except Exception as exc:
+            problems.append({"severity": "warning", "type": "analysis_failed", "message": f"Could not run log-based profile validation: {exc}"})
+
+    suggestions = _dedupe_strings(suggestions)
+    return _profile_lint_payload(project_path, profile_path, problems, suggestions, event_match_counts, session_key_counts, profile_warnings, log_file, query)
+
+
+def render_profile_lint_report(report: dict[str, Any]) -> str:
+    lines = [
+        "# LogGraph Profile Lint",
+        "",
+        f"Project: `{report.get('project')}`",
+        f"Profile: `{report.get('profile')}`",
+    ]
+    if report.get("log_file"):
+        lines.append(f"Log file: `{report.get('log_file')}`")
+    if report.get("query"):
+        lines.append(f"Query: `{report.get('query')}`")
+    counts = report.get("counts", {})
+    lines.extend([
+        "",
+        "## Summary",
+        f"- Problems: {len(report.get('problems', []))}",
+        f"- Event rules checked: {counts.get('events', 0)}",
+        f"- Expected sequences checked: {counts.get('expected_sequences', 0)}",
+    ])
+    lines.extend(["", "## Problems"])
+    for problem in report.get("problems", []):
+        lines.append(f"- [{problem.get('severity', 'warning')}] {problem.get('message', '')}")
+    if not report.get("problems"):
+        lines.append("- No profile quality problems detected by generic lint rules.")
+    if report.get("event_match_counts"):
+        lines.extend(["", "## Event pattern matches"])
+        for name, count in sorted(report["event_match_counts"].items()):
+            lines.append(f"- `{name}`: {count}")
+    if report.get("session_key_counts"):
+        lines.extend(["", "## Session key observations"])
+        for key, count in sorted(report["session_key_counts"].items()):
+            lines.append(f"- `{key}`: {count}")
+    lines.extend(["", "## Suggestions"])
+    lines.extend([f"- {item}" for item in report.get("suggestions", [])] or ["- No immediate profile changes suggested."])
+    return "\n".join(lines)
+
+
+def _profile_lint_payload(project: Path, profile_path: Path, problems: list[dict[str, Any]], suggestions: list[str], event_match_counts: dict[str, int], session_key_counts: dict[str, int], profile_warnings: list[dict[str, Any]], log_file: str | Path | None, query: str) -> dict[str, Any]:
+    profile = load_project_profile(project)
+    return {
+        "project": str(project.resolve()),
+        "profile": str(profile_path),
+        "profile_exists": profile_path.exists(),
+        "log_file": str(log_file) if log_file else "",
+        "query": query,
+        "counts": {
+            "app_identifiers": len(profile.get("app_identifiers") or []),
+            "session_keys": len(profile.get("session_keys") or []),
+            "events": len(profile.get("events") or {}),
+            "expected_sequences": len(profile.get("expected_sequences") or {}),
+        },
+        "problems": _dedupe_problem_dicts(problems),
+        "suggestions": _dedupe_strings(suggestions),
+        "event_match_counts": event_match_counts,
+        "session_key_counts": session_key_counts,
+        "profile_warnings": profile_warnings,
+    }
+
+
+def _normalize_profile_warning(warning: dict[str, Any], event_match_counts: dict[str, int]) -> dict[str, Any]:
+    message = str(warning.get("message", ""))
+    warning_type = str(warning.get("type", "profile_warning"))
+    if warning_type == "sequence_unobserved_event":
+        match = re.search(r"references `([^`]+)`", message)
+        label = match.group(1) if match else ""
+        if label and event_match_counts.get(label, 0) > 0:
+            return {
+                "severity": "warning",
+                "type": "sequence_session_mismatch",
+                "message": f"Expected sequence references `{label}`, and its patterns match the log, but it was not observed in the same session/timeline. The sequence may be over-broad or use mismatched correlation keys.",
+            }
+    return {"severity": "warning", "type": warning_type, "message": message}
+
+
+def _filter_text_for_query(text: str, query: str) -> str:
+    terms = [term.lower() for term in re.findall(r"[A-Za-z0-9_\u4e00-\u9fff-]{2,}", query or "")]
+    if not terms:
+        return text
+    lines = [line for line in text.splitlines() if any(term in line.lower() for term in terms)]
+    return "\n".join(lines) if lines else text
+
+
+def _count_pattern_hits(text: str, pattern: str) -> int:
+    if not pattern:
+        return 0
+    return text.lower().count(pattern.lower())
+
+
+def _looks_like_function_name(value: str) -> bool:
+    return bool(re.search(r"[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*", value)) and len(value) > 14
+
+
+def _is_generic_profile_token(value: str) -> bool:
+    normalized = normalize_text(value).strip().lower()
+    return normalized in GENERIC_PROFILE_TOKENS or (len(normalized) <= 2 and normalized.isascii())
+
+
+def _dedupe_problem_dicts(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen = set()
+    unique = []
+    for item in items:
+        key = (item.get("type"), item.get("message"))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+def _dedupe_strings(items: list[str]) -> list[str]:
+    seen = set()
+    unique = []
+    for item in items:
+        if item and item not in seen:
+            seen.add(item)
+            unique.append(item)
+    return unique
 
 
 def audit_index(index_path: str | Path) -> dict[str, Any]:
